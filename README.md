@@ -44,6 +44,7 @@ Human Operator
 - Python 3.10+
 - LangGraph + Gemini API (AI planning layer)
 - Custom ROS 2 message types (`custom_msgs`)
+- Crazyswarm2 (external dependency, see below)
 
 ## Repository Structure
 
@@ -59,6 +60,7 @@ air-ground-sar/
 │   └── src/
 │       ├── ai_planning/     # AI planning layer (LangGraph graph, prompts, structured output)
 │       ├── scheduling/      # Scheduling & gateway layer (Python FSM, agent dispatch, map injection)
+│       ├── cf_controller/   # CrazyFlie flight control and waypoint navigation
 │       ├── fake_agents/     # Simulation stubs for UAV and ground robot (hardware-free testing)
 │       ├── custom_msgs/     # Custom ROS 2 message definitions (TaskCommand, MapResult, TaskItem)
 │       └── sar_bringup/     # Launch files and parameter config for the full system
@@ -72,12 +74,16 @@ air-ground-sar/
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Build
-cd ros2_ws
+# 2. Install external dependency: Crazyswarm2
+cd ros2_ws/src
+git clone --recursive https://github.com/IMRCLab/crazyswarm2.git
+
+# 3. Build
+cd ../..
 colcon build
 source install/setup.bash
 
-# 3. Launch (simulation — no hardware required)
+# 4. Launch (simulation — no hardware required)
 export GEMINI_API_KEY=your_key_here
 ros2 launch sar_bringup simulate_system.launch.py
 ```
@@ -87,6 +93,15 @@ ros2 launch sar_bringup simulate_system.launch.py
 ```bash
 export GEMINI_API_KEY=your_gemini_api_key_here
 export ROS_DOMAIN_ID=0
+```
+
+## External Dependencies
+
+[Crazyswarm2](https://github.com/IMRCLab/crazyswarm2) is not included in this repository and must be cloned separately into `ros2_ws/src/` before building:
+
+```bash
+cd ros2_ws/src
+git clone --recursive https://github.com/IMRCLab/crazyswarm2.git
 ```
 
 ## Demo
@@ -136,6 +151,7 @@ export ROS_DOMAIN_ID=0
 - Python 3.10+
 - LangGraph + Gemini API（AI 规划层）
 - 自定义 ROS 2 消息类型（`custom_msgs`）
+- Crazyswarm2（外部依赖，见下方说明）
 
 ## 项目结构
 
@@ -151,6 +167,7 @@ air-ground-sar/
 │   └── src/
 │       ├── ai_planning/     # AI 规划层（LangGraph 图、提示词、结构化输出）
 │       ├── scheduling/      # 调度 & 网关层（Python 状态机、agent 派发、地图注入）
+│       ├── cf_controller/   # CrazyFlie 飞行控制与航点导航
 │       ├── fake_agents/     # UAV 与地面机器人仿真桩（无需硬件即可测试）
 │       ├── custom_msgs/     # 自定义 ROS 2 消息定义（TaskCommand、MapResult、TaskItem）
 │       └── sar_bringup/     # 全系统 launch 文件与参数配置
@@ -164,12 +181,16 @@ air-ground-sar/
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-# 2. 编译
-cd ros2_ws
+# 2. 安装外部依赖：Crazyswarm2
+cd ros2_ws/src
+git clone --recursive https://github.com/IMRCLab/crazyswarm2.git
+
+# 3. 编译
+cd ../..
 colcon build
 source install/setup.bash
 
-# 3. 启动（仿真模式，无需硬件）
+# 4. 启动（仿真模式，无需硬件）
 export GEMINI_API_KEY=your_key_here
 ros2 launch sar_bringup simulate_system.launch.py
 ```
@@ -179,6 +200,15 @@ ros2 launch sar_bringup simulate_system.launch.py
 ```bash
 export GEMINI_API_KEY=your_gemini_api_key_here
 export ROS_DOMAIN_ID=0
+```
+
+## 外部依赖
+
+[Crazyswarm2](https://github.com/IMRCLab/crazyswarm2) 未包含在本仓库中，需在编译前单独克隆到 `ros2_ws/src/`：
+
+```bash
+cd ros2_ws/src
+git clone --recursive https://github.com/IMRCLab/crazyswarm2.git
 ```
 
 ## 演示
