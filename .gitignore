@@ -24,6 +24,9 @@ secrets/
 *.yaml.map     # 地图元数据（按需调整）
 maps/generated/
 
+# ===== 学习 / 实验目录（不纳入版本管理）=====
+uav_agent/
+
 # ===== IDE / 系统 =====
 .vscode/
 .idea/

@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'fake_agents'
+package_name = 'ground_controller'
 
 setup(
     name=package_name,
@@ -15,16 +15,14 @@ setup(
     zip_safe=True,
     maintainer='sv',
     maintainer_email='SylviaLuo16@users.noreply.github.com',
-    description='Fake UAV and ground robot nodes for testing the SAR pipeline without real hardware',
+    description='Real TurtleBot3 ground robot controller for the SAR pipeline',
     license='Apache-2.0',
     extras_require={
         'test': ['pytest'],
     },
     entry_points={
         'console_scripts': [
-            'fake_uav_node    = fake_agents.fake_uav_node:main',
-            'fake_ground_node = fake_agents.fake_ground_node:main',
-            'fake_camera_node = fake_agents.fake_camera_node:main',
+            'ground_controller_node = ground_controller.nav2_client_node:main',
         ],
     },
 )

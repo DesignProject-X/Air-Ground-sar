@@ -12,6 +12,7 @@ class State(Enum):
     IDLE = auto()
     RECON = auto()
     MAP_READY = auto()
+    WAITING_TARGET = auto()
     NAVIGATING = auto()
     DONE = auto()
     RETRY = auto()
@@ -20,8 +21,9 @@ class State(Enum):
 class SchedulerNode(Node):
 
     MAX_RETRIES = 3
-    RECON_TIMEOUT_S = 60   # 先预估 UAV 建图约 30-40 s，留有余量 / upper bound for UAV mapping
-    NAV_TIMEOUT_S = 120    # 含路径规划时间，室内场景经验值 / includes planning time, empirical for indoor use
+    RECON_TIMEOUT_S = 60
+    WAITING_TARGET_TIMEOUT_S = 120
+    NAV_TIMEOUT_S = 120
 
     def __init__(self):
         super().__init__('scheduler_node')
@@ -30,6 +32,7 @@ class SchedulerNode(Node):
         self.task_cmd: TaskCommand | None = None
         self.task_names: list[str] = []
         self.map_result: MapResult | None = None
+        self.target_pose: PoseStamped | None = None
         self.retry_count = 0
         self.tick_counter = 0
 
@@ -37,6 +40,8 @@ class SchedulerNode(Node):
                                  self._on_task_command, 10)
         self.create_subscription(MapResult, '/uav/map_result',
                                  self._on_map_result, 10)
+        self.create_subscription(PoseStamped, '/camera/target_pose',
+                                 self._on_camera_target, 10)
         self.create_subscription(Bool, '/goal_reached',
                                  self._on_goal_reached, 10)
         self.create_subscription(String, '/nav_status',
@@ -78,6 +83,15 @@ class SchedulerNode(Node):
             f'Map result received: confidence={msg.confidence:.2f}, frame={msg.frame_id}')
         self._transition(State.MAP_READY)
 
+    def _on_camera_target(self, msg: PoseStamped):
+        if self.state != State.WAITING_TARGET:
+            return
+        self.target_pose = msg
+        self.get_logger().info(
+            f'Camera target received: x={msg.pose.position.x:.2f}, '
+            f'y={msg.pose.position.y:.2f}')
+        self._transition(State.NAVIGATING)
+
     def _on_goal_reached(self, msg: Bool):
         if self.state != State.NAVIGATING:
             return
@@ -105,6 +119,11 @@ class SchedulerNode(Node):
                 self.get_logger().warn('RECON timeout. Triggering retry.')
                 self._transition(State.RETRY)
 
+        elif self.state == State.WAITING_TARGET:
+            if self.tick_counter >= self.WAITING_TARGET_TIMEOUT_S:
+                self.get_logger().warn('WAITING_TARGET timeout. Triggering retry.')
+                self._transition(State.RETRY)
+
         elif self.state == State.NAVIGATING:
             if self.tick_counter >= self.NAV_TIMEOUT_S:
                 self.get_logger().warn('NAVIGATING timeout. Triggering retry.')
@@ -113,12 +132,14 @@ class SchedulerNode(Node):
     def _transition(self, new_state: State):
         self.get_logger().info(f'State transition: {self.state.name} --> {new_state.name}')
         self.state = new_state
-        self.tick_counter = 0  # 每次状态切换都重置，确保新状态从零开始计时
+        self.tick_counter = 0
 
         if new_state == State.RECON:
             self._enter_recon()
         elif new_state == State.MAP_READY:
             self._enter_map_ready()
+        elif new_state == State.WAITING_TARGET:
+            self._enter_waiting_target()
         elif new_state == State.NAVIGATING:
             self._enter_navigating()
         elif new_state == State.DONE:
@@ -145,18 +166,22 @@ class SchedulerNode(Node):
             f'resolution={grid.info.resolution:.3f} m/cell')
 
         if 'navigate_to_target' in self.task_names:
-            self._transition(State.NAVIGATING)
+            self._transition(State.WAITING_TARGET)
         else:
             self.get_logger().info('Recon-only mission. No navigation required.')
             self._transition(State.DONE)
 
+    def _enter_waiting_target(self):
+        self.get_logger().info(
+            'Map injected. Waiting for camera to detect target...')
+
     def _enter_navigating(self):
-        if self.map_result is None:
-            self.get_logger().error('map_result is None. Cannot retrieve target pose.')
+        if self.target_pose is None:
+            self.get_logger().error('target_pose is None. Cannot navigate.')
             self._transition(State.RETRY)
             return
 
-        target = self.map_result.target
+        target = self.target_pose
         target.header.stamp = self.get_clock().now().to_msg()
         target.header.frame_id = 'map'
         self.pub_goal.publish(target)
@@ -171,8 +196,9 @@ class SchedulerNode(Node):
         self.task_cmd = None
         self.task_names = []
         self.map_result = None
+        self.target_pose = None
         self.retry_count = 0
-        self.state = State.IDLE  # 直接赋值，不走 _transition，避免触发不存在的 _enter_idle
+        self.state = State.IDLE
 
     def _enter_retry(self):
         self.retry_count += 1
@@ -181,18 +207,20 @@ class SchedulerNode(Node):
                 f'Max retries ({self.MAX_RETRIES}) exceeded. Mission failed. Returning to IDLE.')
             intent = self.task_cmd.intent if self.task_cmd else 'unknown'
             self.pub_feedback.publish(String(data=(
-                f'Mission failed: aerial_recon timed out after {self.MAX_RETRIES} retries. '
-                f'UAV is unresponsive. Original intent: {intent}.'
+                f'Mission failed after {self.MAX_RETRIES} retries. '
+                f'UAV or camera unresponsive. Original intent: {intent}.'
             )))
             self.task_cmd = None
             self.task_names = []
             self.map_result = None
+            self.target_pose = None
             self.retry_count = 0
             self.state = State.IDLE
         else:
             self.get_logger().warn(
                 f'Retry {self.retry_count}/{self.MAX_RETRIES}. Re-dispatching UAV...')
             self.map_result = None
+            self.target_pose = None
             self._transition(State.RECON)
 
 
