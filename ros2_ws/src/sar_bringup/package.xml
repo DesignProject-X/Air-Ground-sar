@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sar_bringup</name>
+  <version>0.0.0</version>
+  <description>Launch files for the air-ground SAR system</description>
+  <maintainer email="SylviaLuo16@users.noreply.github.com">sv</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>ai_planning</exec_depend>
+  <exec_depend>scheduling</exec_depend>
+  <exec_depend>fake_agents</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

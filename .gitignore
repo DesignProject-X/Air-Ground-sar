@@ -27,6 +27,10 @@ maps/generated/
 # ===== 学习 / 实验目录（不纳入版本管理）=====
 uav_agent/
 
+# ===== 外部依赖（需自行 clone，不纳入版本管理）=====
+#ros2_ws/src/crazyswarm2/
+#ros2_ws/src/crazyflie_ros2_multiranger/
+ros2_ws/src/uav_agnet/
 # ===== IDE / 系统 =====
 .vscode/
 .idea/

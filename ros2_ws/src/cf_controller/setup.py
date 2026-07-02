@@ -25,9 +25,6 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'cf_basic_control = cf_controller.cf_basic_control:main',
-            'cf_waypoint_control = cf_controller.cf_waypoint_control:main',
-            'cf_waypoint_with_scan = cf_controller.cf_waypoint_with_scan:main',
             'cf_waypoint_real = cf_controller.cf_waypoint_real:main',
         ],
     },
