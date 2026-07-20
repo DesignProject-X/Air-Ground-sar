@@ -1,3 +1,8 @@
 langgraph
 langchain-google-genai
 pydantic
+ultralytics
+opencv-python
+rowan
+pyyaml
+paramiko

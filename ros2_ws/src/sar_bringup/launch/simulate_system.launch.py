@@ -25,6 +25,10 @@ def generate_launch_description():
             executable='fake_ground_node',
         ),
         Node(
+            package='fake_agents',
+            executable='fake_camera_node',
+        ),
+        Node(
             package='ai_planning',
             executable='planner_node',
         ),

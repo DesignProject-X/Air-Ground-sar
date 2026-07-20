@@ -20,12 +20,20 @@ secrets/
 # ===== 机器人运行产物 =====
 *.bag
 *.db3          # rosbag2
-*.pgm          # 生成的地图
 *.yaml.map     # 地图元数据（按需调整）
-maps/generated/
+maps/generated/  # 运行时生成的地图，不是仓库自带的参考地图（比如 maze_map.pgm）
+
+# ===== 运行时缓存 =====
+ros2_ws/cache/
 
 # ===== 学习 / 实验目录（不纳入版本管理）=====
 uav_agent/
+
+# ===== YOLO 权重文件（运行时自动下载，不纳入版本管理）=====
+*.pt
+
+# ===== 视觉调试输出（运行时生成，不纳入版本管理）=====
+ros2_ws/src/uav_vision/debug_output/
 
 # ===== 外部依赖（需自行 clone，不纳入版本管理）=====
 #ros2_ws/src/crazyswarm2/

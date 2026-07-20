@@ -55,15 +55,21 @@ air-ground-sar/
 │   ├── presentations/
 │   ├── reports/
 │   ├── demo/
-│   └── testing/             # Simulation testing guides
+│   └── testing/             # Simulation + real hardware testing guides
 ├── ros2_ws/
 │   └── src/
-│       ├── ai_planning/     # AI planning layer (LangGraph graph, prompts, structured output)
-│       ├── scheduling/      # Scheduling & gateway layer (Python FSM, agent dispatch, map injection)
-│       ├── cf_controller/   # CrazyFlie flight control and waypoint navigation
-│       ├── fake_agents/     # Simulation stubs for UAV and ground robot (hardware-free testing)
-│       ├── custom_msgs/     # Custom ROS 2 message definitions (TaskCommand, MapResult, TaskItem)
-│       └── sar_bringup/     # Launch files and parameter config for the full system
+│       ├── ai_planning/       # AI planning layer (LangGraph graph, prompts, structured output)
+│       ├── scheduling/        # Scheduling & gateway layer (Python FSM, agent dispatch, map injection)
+│       ├── cf_controller/     # CrazyFlie flight control and waypoint navigation
+│       ├── ground_controller/ # Real ground robot side: Nav2 client, ArUco→map coordinate bridge,
+│       │                      #   SSH-free map injection receiver, clock sync, initial pose
+│       ├── uav_vision/        # YOLO + ArUco target detection on the UAV-side camera stream
+│       ├── fake_agents/       # Simulation stubs for UAV and ground robot (hardware-free testing)
+│       ├── custom_msgs/       # Custom ROS 2 message/service definitions (TaskCommand, MapResult,
+│       │                      #   TaskItem, SaveMap, SyncClock, ...)
+│       └── sar_bringup/       # Launch files, parameter config, and the web dashboard
+│           └── web/           # Browser dashboard (rosbridge + roslib.js) - NL command, live
+│                               #   mission state, map/camera view, event log
 └── scripts/                 # Environment setup / one-shot launch scripts
 ```
 
@@ -84,14 +90,35 @@ colcon build
 source install/setup.bash
 
 # 4. Launch (simulation — no hardware required)
-export GEMINI_API_KEY=your_key_here
+export GOOGLE_API_KEY=your_key_here
 ros2 launch sar_bringup simulate_system.launch.py
+```
+
+### Real hardware
+
+Runs across two machines: the base station (this repo, camera + AI planning +
+scheduler + dashboard) and the ground robot (its own separate `tb_ws`
+workspace, Nav2 + hardware bringup). See
+[`docs/testing/real_hardware.md`](docs/testing/real_hardware.md) for the full
+setup, but the short version:
+
+```bash
+# On the ground robot
+ros2 launch ground_controller robot_bringup.launch.py
+
+# On the base station
+ros2 launch sar_bringup base_station_real.launch.py
+ros2 run fake_agents fake_uav_node   # stand-in for a real/sim UAV recon flight
+
+# Dashboard (base station)
+cd ros2_ws/src/sar_bringup/web && python3 -m http.server 8080
+# open http://localhost:8080/dashboard.html
 ```
 
 ## Environment Variables
 
 ```bash
-export GEMINI_API_KEY=your_gemini_api_key_here
+export GOOGLE_API_KEY=your_gemini_api_key_here
 export ROS_DOMAIN_ID=0
 ```
 
@@ -109,6 +136,8 @@ git clone --recursive https://github.com/IMRCLab/crazyswarm2.git
 > Video links and key screenshots in `docs/demo/`
 
 > Simulation testing guide (no hardware required): [`docs/testing/simulation.md`](docs/testing/simulation.md)
+
+> Real hardware testing guide: [`docs/testing/real_hardware.md`](docs/testing/real_hardware.md)
 
 ---
 
@@ -162,15 +191,21 @@ air-ground-sar/
 │   ├── presentations/
 │   ├── reports/
 │   ├── demo/
-│   └── testing/             # 仿真测试指南
+│   └── testing/             # 仿真 + 真实硬件测试指南
 ├── ros2_ws/
 │   └── src/
-│       ├── ai_planning/     # AI 规划层（LangGraph 图、提示词、结构化输出）
-│       ├── scheduling/      # 调度 & 网关层（Python 状态机、agent 派发、地图注入）
-│       ├── cf_controller/   # CrazyFlie 飞行控制与航点导航
-│       ├── fake_agents/     # UAV 与地面机器人仿真桩（无需硬件即可测试）
-│       ├── custom_msgs/     # 自定义 ROS 2 消息定义（TaskCommand、MapResult、TaskItem）
-│       └── sar_bringup/     # 全系统 launch 文件与参数配置
+│       ├── ai_planning/       # AI 规划层（LangGraph 图、提示词、结构化输出）
+│       ├── scheduling/        # 调度 & 网关层（Python 状态机、agent 派发、地图注入）
+│       ├── cf_controller/     # CrazyFlie 飞行控制与航点导航
+│       ├── ground_controller/ # 真实地面机器人端：Nav2 客户端、ArUco→map坐标转换桥、
+│       │                      #   免SSH地图注入接收节点、时钟同步、初始位姿
+│       ├── uav_vision/        # UAV端摄像头画面上的 YOLO + ArUco 目标检测
+│       ├── fake_agents/       # UAV 与地面机器人仿真桩（无需硬件即可测试）
+│       ├── custom_msgs/       # 自定义 ROS 2 消息/服务定义（TaskCommand、MapResult、
+│       │                      #   TaskItem、SaveMap、SyncClock 等）
+│       └── sar_bringup/       # 全系统 launch 文件、参数配置、网页仪表盘
+│           └── web/           # 浏览器仪表盘（rosbridge + roslib.js）——自然语言指令、
+│                               #   实时任务状态、地图/摄像头画面、事件日志
 └── scripts/                 # 环境配置 / 一键启动脚本
 ```
 
@@ -191,14 +226,33 @@ colcon build
 source install/setup.bash
 
 # 4. 启动（仿真模式，无需硬件）
-export GEMINI_API_KEY=your_key_here
+export GOOGLE_API_KEY=your_key_here
 ros2 launch sar_bringup simulate_system.launch.py
+```
+
+### 真实硬件
+
+跨两台机器运行：基站（本仓库，相机 + AI 规划 + 调度器 + 仪表盘）和地面机器人
+（它自己独立的 `tb_ws` 工作空间，Nav2 + 硬件启动）。完整配置见
+[`docs/testing/real_hardware.md`](docs/testing/real_hardware.md)，简要版本：
+
+```bash
+# 在地面机器人上
+ros2 launch ground_controller robot_bringup.launch.py
+
+# 在基站上
+ros2 launch sar_bringup base_station_real.launch.py
+ros2 run fake_agents fake_uav_node   # 真实/仿真无人机建图的替身
+
+# 仪表盘（基站）
+cd ros2_ws/src/sar_bringup/web && python3 -m http.server 8080
+# 打开 http://localhost:8080/dashboard.html
 ```
 
 ## 环境变量
 
 ```bash
-export GEMINI_API_KEY=your_gemini_api_key_here
+export GOOGLE_API_KEY=your_gemini_api_key_here
 export ROS_DOMAIN_ID=0
 ```
 
@@ -216,6 +270,8 @@ git clone --recursive https://github.com/IMRCLab/crazyswarm2.git
 > 视频链接与截图见 `docs/demo/`
 
 > 仿真测试指南（无需硬件）：[`docs/testing/simulation.md`](docs/testing/simulation.md)
+
+> 真实硬件测试指南：[`docs/testing/real_hardware.md`](docs/testing/real_hardware.md)
 
 ---
 

@@ -163,6 +163,7 @@ class CfWaypointReal(Node):
             TAKEOFF_DURATION + 1.0,
             self.fly_next_waypoint
         )
+        
 
     def fly_next_waypoint(self):
         """

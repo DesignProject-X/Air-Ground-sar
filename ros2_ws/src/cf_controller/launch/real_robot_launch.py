@@ -29,6 +29,17 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
 
+    # 带Map显示的rviz配置(在默认config.rviz基础上加了Map面板,订阅/cf231/map)
+    # 注意:仅rviz配置本身不够,要让Map正确显示,需要另外单独跑一个
+    # map<->world的静态TF桥接节点,否则map坐标系和驱动实时广播的world坐标系
+    # 是两棵不相连的TF树:
+    #   ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 map world
+    rviz_config_path = os.path.join(
+        get_package_share_directory('crazyflie'),
+        'config',
+        'config_with_map.rviz'
+    )
+
     # 复用 crazyswarm2 的主 launch，指定用 cflib backend 直连真机
     crazyflie_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -43,6 +54,7 @@ def generate_launch_description():
             'mocap': 'False',         # 不用动捕系统
             'teleop': 'False',        # 不用手柄遥控
             'rviz': 'True',           # 启动 RViz
+            'rviz_config_file': rviz_config_path,
         }.items()
     )
 

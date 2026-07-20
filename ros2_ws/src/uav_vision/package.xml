@@ -1,23 +1,16 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>ground_controller</name>
+  <name>uav_vision</name>
   <version>0.0.0</version>
-  <description>Real TurtleBot3 ground robot controller — Nav2 NavigateToPose client for the SAR pipeline</description>
-  <maintainer email="SylviaLuo16@users.noreply.github.com">sv</maintainer>
+  <description>Real target detection (YOLO + ArUco) on the UAV's D436 camera stream</description>
+  <maintainer email="sutd@todo.todo">sutd</maintainer>
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
-  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
-  <depend>nav2_msgs</depend>
-  <depend>custom_msgs</depend>
-  <depend>action_msgs</depend>
-  <depend>tf2_ros</depend>
-  <depend>tf2_geometry_msgs</depend>
-  <depend>tf_transformations</depend>
-  <depend>visualization_msgs</depend>
-  <depend>std_srvs</depend>
+  <depend>cv_bridge</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

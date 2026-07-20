@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>SAR Mission Control</title>
+<script src="lib/roslib.min.js"></script>
+<style>
+  :root {
+    --bg: #05070d;
+    --panel-bg: rgba(10, 16, 28, 0.72);
+    --panel-border: rgba(0, 229, 255, 0.25);
+    --cyan: #00e5ff;
+    --cyan-dim: rgba(0, 229, 255, 0.5);
+    --amber: #ff9100;
+    --green: #00ffa3;
+    --red: #ff3860;
+    --text: #d8ecff;
+    --text-dim: #6e8aa8;
+    --mono: 'Consolas', 'JetBrains Mono', 'SFMono-Regular', Menlo, monospace;
+    --sans: 'Segoe UI', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse at top, #0a1626 0%, #05070d 60%),
+      repeating-linear-gradient(0deg, rgba(0,229,255,0.03) 0px, rgba(0,229,255,0.03) 1px, transparent 1px, transparent 40px),
+      repeating-linear-gradient(90deg, rgba(0,229,255,0.03) 0px, rgba(0,229,255,0.03) 1px, transparent 1px, transparent 40px);
+    color: var(--text);
+    font-family: var(--sans);
+    padding: 16px;
+  }
+
+  /* scanline overlay for HUD feel */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg, rgba(255,255,255,0.015) 0px, transparent 1px, transparent 3px);
+    z-index: 999;
+  }
+
+  h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: 0.06em; }
+
+  .glow-text { text-shadow: 0 0 8px currentColor; }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    margin-bottom: 14px;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: var(--panel-bg);
+    backdrop-filter: blur(6px);
+    box-shadow: 0 0 24px rgba(0, 229, 255, 0.08);
+  }
+
+  header h1 {
+    color: var(--cyan);
+    font-size: 1.3rem;
+    text-transform: uppercase;
+  }
+  header h1 span { color: var(--text-dim); font-size: 0.75rem; margin-left: 10px; letter-spacing: 0.15em; }
+
+  .conn-status { display: flex; align-items: center; gap: 18px; font-family: var(--mono); font-size: 0.8rem; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .dot.ok { background: var(--green); box-shadow: 0 0 10px var(--green); animation: pulse 2s infinite; }
+  .dot.bad { background: var(--red); box-shadow: 0 0 10px var(--red); }
+  .dot.warn { background: var(--amber); box-shadow: 0 0 10px var(--amber); animation: pulse 1s infinite; }
+
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  #clock { color: var(--text-dim); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 340px 1fr 360px;
+    gap: 14px;
+    align-items: start;
+  }
+  @media (max-width: 1200px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel {
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: var(--panel-bg);
+    backdrop-filter: blur(6px);
+    padding: 14px 16px;
+    margin-bottom: 14px;
+    box-shadow: 0 0 18px rgba(0, 229, 255, 0.05);
+  }
+  .panel h2 {
+    font-size: 0.78rem;
+    color: var(--cyan);
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--panel-border);
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+  }
+  .panel h2 .hint { color: var(--text-dim); text-transform: none; font-weight: 400; letter-spacing: 0; }
+
+  textarea, input[type=text] {
+    width: 100%;
+    background: rgba(0,0,0,0.35);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    padding: 8px;
+    resize: vertical;
+  }
+  textarea:focus, input[type=text]:focus { outline: none; border-color: var(--cyan); box-shadow: 0 0 8px rgba(0,229,255,0.3); }
+
+  button {
+    background: linear-gradient(180deg, rgba(0,229,255,0.25), rgba(0,229,255,0.08));
+    border: 1px solid var(--cyan-dim);
+    color: var(--cyan);
+    font-family: var(--sans);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    border-radius: 6px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+  }
+  button:hover { background: rgba(0,229,255,0.3); box-shadow: 0 0 12px rgba(0,229,255,0.4); }
+  button:active { transform: scale(0.97); }
+  button.secondary { color: var(--text-dim); border-color: rgba(110,138,168,0.4); background: rgba(255,255,255,0.02); }
+
+  .row { display: flex; gap: 8px; margin-top: 8px; }
+  .row > button { flex: none; }
+  .row > input, .row > textarea { flex: 1; }
+
+  /* AI plan */
+  #planIntent { font-family: var(--mono); font-size: 0.85rem; color: var(--amber); }
+  #planZone { font-family: var(--mono); font-size: 0.8rem; color: var(--text-dim); }
+  .task-item {
+    border-left: 3px solid var(--cyan-dim);
+    padding: 6px 10px;
+    margin: 8px 0;
+    background: rgba(0,229,255,0.04);
+    border-radius: 0 6px 6px 0;
+    font-size: 0.8rem;
+  }
+  .task-item .task-name { color: var(--cyan); font-family: var(--mono); font-weight: 600; }
+  .task-item .task-agent { color: var(--text-dim); font-size: 0.7rem; }
+  .task-item .task-reason { color: var(--text); opacity: 0.8; margin-top: 4px; font-size: 0.75rem; }
+  .empty-hint { color: var(--text-dim); font-size: 0.8rem; font-style: italic; }
+
+  /* state pipeline */
+  .pipeline { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-bottom: 14px; }
+  .state-node {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    padding: 8px 12px;
+    border: 1px solid rgba(110,138,168,0.35);
+    border-radius: 20px;
+    color: var(--text-dim);
+    transition: all 0.3s;
+  }
+  .state-node.active {
+    color: #001018;
+    background: var(--cyan);
+    border-color: var(--cyan);
+    box-shadow: 0 0 18px var(--cyan);
+    font-weight: 700;
+  }
+  .state-node.retry-active {
+    color: #1a0500;
+    background: var(--amber);
+    border-color: var(--amber);
+    box-shadow: 0 0 18px var(--amber);
+    font-weight: 700;
+  }
+
+  /* map canvas */
+  #mapWrap { position: relative; width: 100%; }
+  #mapCanvas {
+    width: 100%;
+    height: 420px;
+    background: #000814;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    image-rendering: pixelated;
+  }
+  #mapOverlayInfo {
+    position: absolute; top: 8px; left: 8px;
+    font-family: var(--mono); font-size: 0.68rem; color: var(--text-dim);
+    background: rgba(0,0,0,0.4); padding: 4px 8px; border-radius: 4px;
+  }
+
+  /* camera feed */
+  #camWrap { position: relative; }
+  #camCanvas {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: #000;
+    display: block;
+    min-height: 200px;
+  }
+  #camPlaceholder {
+    color: var(--text-dim); font-family: var(--mono); font-size: 0.75rem;
+    text-align: center; padding: 60px 10px;
+  }
+
+  /* health */
+  .health-row {
+    display: flex; justify-content: space-between; align-items: center;
+    font-family: var(--mono); font-size: 0.75rem; padding: 5px 0;
+    border-bottom: 1px dashed rgba(110,138,168,0.15);
+  }
+  .health-row:last-child { border-bottom: none; }
+
+  /* log */
+  #logPanel { max-height: 260px; overflow-y: auto; font-family: var(--mono); font-size: 0.72rem; }
+  #logPanel div { padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.03); white-space: pre-wrap; word-break: break-word; }
+  .lvl-INFO { color: var(--text-dim); }
+  .lvl-WARN { color: var(--amber); }
+  .lvl-ERROR, .lvl-FATAL { color: var(--red); }
+  .log-node { color: var(--cyan); }
+  .log-time { color: rgba(255,255,255,0.25); margin-right: 6px; }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgba(0,229,255,0.25); border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SAR MISSION CONTROL <span>AIR-GROUND SEARCH &amp; RESCUE</span></h1>
+  <div class="conn-status">
+    <span id="connDot" class="dot bad"></span>
+    <span id="connLabel">DISCONNECTED</span>
+    <input id="rosbridgeUrl" type="text" value="ws://localhost:9090" style="width:180px;">
+    <button id="connectBtn" class="secondary">Connect</button>
+    <span id="clock">--:--:--</span>
+  </div>
+</header>
+
+<div class="grid">
+
+  <!-- LEFT COLUMN -->
+  <div>
+    <div class="panel">
+      <h2>Operator Command <span class="hint">→ /operator/command</span></h2>
+      <textarea id="cmdInput" rows="3" placeholder="用自然语言下达任务,例如: 搜索左边房间,发现人员就靠近查看"></textarea>
+      <div class="row">
+        <button id="sendCmdBtn">Send Command</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Replan Feedback <span class="hint">→ /planner/feedback</span></h2>
+      <textarea id="feedbackInput" rows="2" placeholder="任务失败后,把原因/反馈填在这里触发重新规划"></textarea>
+      <div class="row">
+        <button id="sendFeedbackBtn" class="secondary">Send Feedback</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>AI Plan <span class="hint">← /planner/last_plan</span></h2>
+      <div id="planIntent">-</div>
+      <div id="planZone">-</div>
+      <div id="planTasks"><div class="empty-hint">尚未收到任何方案...</div></div>
+    </div>
+  </div>
+
+  <!-- CENTER COLUMN -->
+  <div>
+    <div class="panel">
+      <h2>Mission State <span class="hint">← /scheduler/state</span></h2>
+      <div class="pipeline" id="pipeline">
+        <div class="state-node" data-state="IDLE">IDLE</div>
+        <div class="state-node" data-state="RECON">RECON</div>
+        <div class="state-node" data-state="MAP_READY">MAP_READY</div>
+        <div class="state-node" data-state="WAITING_TARGET">WAITING_TARGET</div>
+        <div class="state-node" data-state="NAVIGATING">NAVIGATING</div>
+        <div class="state-node" data-state="DONE">DONE</div>
+        <div class="state-node" data-state="RETRY">RETRY</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Initial Pose <span class="hint">→ /initialpose</span></h2>
+      <div class="row">
+        <input id="initX" type="text" value="-0.405" style="text-align:center;">
+        <input id="initY" type="text" value="-0.230" style="text-align:center;">
+        <input id="initYaw" type="text" value="0.0" style="text-align:center;">
+      </div>
+      <div style="display:flex; gap:8px; font-size:0.65rem; color:var(--text-dim); font-family:var(--mono); margin-top:2px;">
+        <span style="flex:1; text-align:center;">x (m)</span>
+        <span style="flex:1; text-align:center;">y (m)</span>
+        <span style="flex:1; text-align:center;">yaw (rad)</span>
+      </div>
+      <div class="row">
+        <button id="sendInitPoseBtn">Publish Initial Pose</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Map &amp; Robot <span class="hint">← /map, /camera/target_pose, TF</span></h2>
+      <div id="mapWrap">
+        <canvas id="mapCanvas"></canvas>
+        <div id="mapOverlayInfo">no map yet</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Event Log <span class="hint">← /rosout</span></h2>
+      <div id="logPanel"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT COLUMN -->
+  <div>
+    <div class="panel">
+      <h2>Camera Detection <span class="hint">← /camera/annotated_image/compressed</span></h2>
+      <div id="camWrap">
+        <canvas id="camCanvas"></canvas>
+        <div id="camPlaceholder">等待检测画面...</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Node Health</h2>
+      <div id="healthPanel"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Connection
+// ---------------------------------------------------------------------------
+let ros = null;
+let tfClient = null;
+const connDot = document.getElementById('connDot');
+const connLabel = document.getElementById('connLabel');
+
+function setConnState(state) {
+  connDot.className = 'dot ' + (state === 'ok' ? 'ok' : state === 'warn' ? 'warn' : 'bad');
+  connLabel.textContent = { ok: 'CONNECTED', warn: 'CONNECTING...', bad: 'DISCONNECTED' }[state];
+}
+
+function connect() {
+  const url = document.getElementById('rosbridgeUrl').value.trim();
+  if (ros) { try { ros.close(); } catch (e) {} }
+  setConnState('warn');
+  ros = new ROSLIB.Ros({ url });
+
+  ros.on('connection', () => { setConnState('ok'); setupTopics(); });
+  ros.on('error', () => setConnState('bad'));
+  ros.on('close', () => setConnState('bad'));
+}
+
+document.getElementById('connectBtn').addEventListener('click', connect);
+
+// ---------------------------------------------------------------------------
+// Clock
+// ---------------------------------------------------------------------------
+setInterval(() => {
+  document.getElementById('clock').textContent = new Date().toISOString().substr(11, 8) + ' UTC';
+}, 1000);
+
+// ---------------------------------------------------------------------------
+// Health tracking (last-seen timestamps per topic)
+// ---------------------------------------------------------------------------
+const health = {
+  '/scheduler/state': { label: 'scheduler_node', last: 0 },
+  '/planner/last_plan': { label: 'planner_node', last: 0 },
+  '/map': { label: 'map_server (ground robot)', last: 0 },
+  '/camera/target_pose': { label: 'coordinate_bridge_node', last: 0 },
+  '/camera/annotated_image/compressed': { label: 'target_detector_node', last: 0 },
+};
+function markSeen(topic) { health[topic].last = Date.now(); }
+
+function renderHealth() {
+  const panel = document.getElementById('healthPanel');
+  panel.innerHTML = '';
+  const now = Date.now();
+  for (const topic in health) {
+    const h = health[topic];
+    const age = h.last ? (now - h.last) / 1000 : Infinity;
+    const state = age < 15 ? 'ok' : (h.last ? 'warn' : 'bad');
+    const row = document.createElement('div');
+    row.className = 'health-row';
+    row.innerHTML = `<span><span class="dot ${state}"></span>${h.label}</span>` +
+      `<span>${h.last ? age.toFixed(0) + 's ago' : 'never'}</span>`;
+    panel.appendChild(row);
+  }
+}
+setInterval(renderHealth, 1000);
+
+// ---------------------------------------------------------------------------
+// Event log
+// ---------------------------------------------------------------------------
+const KNOWN_NODES = new Set([
+  'scheduler_node', 'ground_controller_node', 'coordinate_bridge_node',
+  'target_detector_node', 'planner_node', 'map_receiver_node',
+  'clock_sync_node', 'clock_sync_client', 'initial_pose_publisher',
+]);
+const LEVEL_NAMES = { 10: 'DEBUG', 20: 'INFO', 30: 'WARN', 40: 'ERROR', 50: 'FATAL' };
+
+function appendLog(nodeName, levelNum, msg, stampSec) {
+  const panel = document.getElementById('logPanel');
+  const lvl = LEVEL_NAMES[levelNum] || 'INFO';
+  const t = stampSec ? new Date(stampSec * 1000).toISOString().substr(11, 8) : '--:--:--';
+  const div = document.createElement('div');
+  div.innerHTML = `<span class="log-time">${t}</span>` +
+    `<span class="log-node">[${nodeName}]</span> ` +
+    `<span class="lvl-${lvl}">${msg}</span>`;
+  panel.appendChild(div);
+  panel.scrollTop = panel.scrollHeight;
+  while (panel.children.length > 300) panel.removeChild(panel.firstChild);
+}
+
+// ---------------------------------------------------------------------------
+// AI Plan panel
+// ---------------------------------------------------------------------------
+function renderPlan(plan) {
+  document.getElementById('planIntent').textContent = 'Intent: ' + (plan.intent || '-');
+  document.getElementById('planZone').textContent = 'Goal zone: ' + (plan.goal_zone || '(default)');
+  const wrap = document.getElementById('planTasks');
+  wrap.innerHTML = '';
+  if (!plan.tasks || !plan.tasks.length) {
+    wrap.innerHTML = '<div class="empty-hint">此方案不包含任何任务</div>';
+    return;
+  }
+  plan.tasks.forEach((t, i) => {
+    const el = document.createElement('div');
+    el.className = 'task-item';
+    el.innerHTML =
+      `<span class="task-name">${i + 1}. ${t.task}</span> <span class="task-agent">[${t.agent}]</span>` +
+      (t.reason ? `<div class="task-reason">${t.reason}</div>` : '');
+    wrap.appendChild(el);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Mission state pipeline
+// ---------------------------------------------------------------------------
+function renderState(stateName) {
+  document.querySelectorAll('.state-node').forEach(n => {
+    n.classList.remove('active', 'retry-active');
+    if (n.dataset.state === stateName) {
+      n.classList.add(stateName === 'RETRY' ? 'retry-active' : 'active');
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Map rendering
+// ---------------------------------------------------------------------------
+let lastMapInfo = null;
+let lastRobotPose = null;   // {x, y, yaw} in map frame
+let lastTargetPose = null;  // {x, y} in map frame
+
+function drawMap() {
+  const canvas = document.getElementById('mapCanvas');
+  const ctx = canvas.getContext('2d');
+  if (!lastMapInfo) return;
+
+  const { width, height, data } = lastMapInfo;
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const img = ctx.createImageData(width, height);
+  for (let row = 0; row < height; row++) {
+    const srcRow = height - 1 - row; // OccupancyGrid is bottom-up, canvas is top-down
+    for (let col = 0; col < width; col++) {
+      const v = data[srcRow * width + col];
+      const idx = (row * width + col) * 4;
+      let r, g, b, a;
+      if (v < 0) { r = 10; g = 18; b = 30; a = 255; }               // unknown
+      else if (v < 30) { r = 5; g = 15; b = 25; a = 255; }          // free
+      else { const t = v / 100; r = 0; g = Math.round(160 + 95*t); b = Math.round(200 + 55*t); a = 255; } // occupied -> cyan/white
+      img.data[idx] = r; img.data[idx+1] = g; img.data[idx+2] = b; img.data[idx+3] = a;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const worldToPx = (x, y) => {
+    const px = (x - lastMapInfo.originX) / lastMapInfo.resolution;
+    const pyFromBottom = (y - lastMapInfo.originY) / lastMapInfo.resolution;
+    return [px, height - pyFromBottom];
+  };
+
+  // Marker sizes scale with the map's cell resolution instead of using
+  // fixed canvas-pixel offsets, so a small/coarse map (e.g. 25x25 cells)
+  // doesn't end up with markers so large they blot out most of the map.
+  // 标记大小跟着地图格子分辨率走,而不是用固定的画布像素偏移——不然遇到
+  // 25x25这种格子很少的小地图,标记会大到几乎盖住整张地图。
+  const m = Math.max(1, Math.min(width, height) * 0.02);
+
+  if (lastRobotPose) {
+    const [px, py] = worldToPx(lastRobotPose.x, lastRobotPose.y);
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(-lastRobotPose.yaw);
+    ctx.fillStyle = '#00ffa3';
+    ctx.shadowColor = '#00ffa3';
+    ctx.shadowBlur = m;
+    ctx.beginPath();
+    ctx.moveTo(1.5*m, 0); ctx.lineTo(-m, m); ctx.lineTo(-m, -m);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  if (lastTargetPose) {
+    const [px, py] = worldToPx(lastTargetPose.x, lastTargetPose.y);
+    ctx.save();
+    ctx.strokeStyle = '#ff9100';
+    ctx.shadowColor = '#ff9100';
+    ctx.shadowBlur = m * 0.5;
+    ctx.lineWidth = Math.max(0.5, m * 0.2);
+    ctx.beginPath(); ctx.arc(px, py, 1.2*m, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(px - m, py); ctx.lineTo(px + m, py);
+    ctx.moveTo(px, py - m); ctx.lineTo(px, py + m); ctx.stroke();
+    ctx.restore();
+  }
+
+  document.getElementById('mapOverlayInfo').textContent =
+    `${width}x${height} @ ${lastMapInfo.resolution.toFixed(3)}m/cell`;
+}
+setInterval(drawMap, 300);
+
+function quatToYaw(q) {
+  return Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
+}
+
+// ---------------------------------------------------------------------------
+// Camera feed rendering (raw bgr8 sensor_msgs/Image, base64-encoded by rosbridge)
+// ---------------------------------------------------------------------------
+// CompressedImage (format: 'jpg', data: base64 JPEG bytes) - let the
+// browser's native decoder do the work instead of unpacking raw pixels.
+// Raw sensor_msgs/Image was tried first, but rosbridge falls behind and
+// silently drops most frames of a multi-MB message at even 1-2Hz; a JPEG
+// frame is a few dozen KB, which doesn't have that problem.
+function drawCameraImage(msg) {
+  try {
+    const canvas = document.getElementById('camCanvas');
+    const placeholder = document.getElementById('camPlaceholder');
+    const ctx = canvas.getContext('2d');
+    const el = new Image();
+    el.onload = () => {
+      canvas.width = el.width;
+      canvas.height = el.height;
+      ctx.drawImage(el, 0, 0);
+      placeholder.style.display = 'none';
+      canvas.style.display = 'block';
+    };
+    el.onerror = (e) => console.error('[camera] image decode failed:', e);
+    el.src = 'data:image/' + (msg.format || 'jpeg') + ';base64,' + msg.data;
+  } catch (e) {
+    console.error('[camera] drawCameraImage failed:', e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Topic setup (called once connected)
+// ---------------------------------------------------------------------------
+function setupTopics() {
+  // Publishers
+  const cmdTopic = new ROSLIB.Topic({ ros, name: '/operator/command', messageType: 'std_msgs/msg/String' });
+  const feedbackTopic = new ROSLIB.Topic({ ros, name: '/planner/feedback', messageType: 'std_msgs/msg/String' });
+  const initPoseTopic = new ROSLIB.Topic({ ros, name: '/initialpose', messageType: 'geometry_msgs/msg/PoseWithCovarianceStamped' });
+
+  document.getElementById('sendCmdBtn').onclick = () => {
+    const text = document.getElementById('cmdInput').value.trim();
+    if (!text) return;
+    cmdTopic.publish({ data: text });
+    appendLog('dashboard', 20, 'Command sent: ' + text, Date.now() / 1000);
+  };
+  document.getElementById('sendFeedbackBtn').onclick = () => {
+    const text = document.getElementById('feedbackInput').value.trim();
+    if (!text) return;
+    feedbackTopic.publish({ data: text });
+    appendLog('dashboard', 20, 'Feedback sent: ' + text, Date.now() / 1000);
+  };
+  document.getElementById('sendInitPoseBtn').onclick = () => {
+    const x = parseFloat(document.getElementById('initX').value);
+    const y = parseFloat(document.getElementById('initY').value);
+    const yaw = parseFloat(document.getElementById('initYaw').value);
+    if ([x, y, yaw].some(Number.isNaN)) return;
+    initPoseTopic.publish({
+      header: { frame_id: 'map' },
+      pose: {
+        pose: {
+          position: { x, y, z: 0.0 },
+          orientation: { x: 0.0, y: 0.0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) },
+        },
+        covariance: [
+          0.25,0,0,0,0,0, 0,0.25,0,0,0,0, 0,0,0,0,0,0,
+          0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0.06853891945200942,
+        ],
+      },
+    });
+    appendLog('dashboard', 20, `Initial pose published: x=${x} y=${y} yaw=${yaw}`, Date.now() / 1000);
+  };
+
+  // Scheduler state
+  new ROSLIB.Topic({ ros, name: '/scheduler/state', messageType: 'std_msgs/msg/String' })
+    .subscribe(msg => { markSeen('/scheduler/state'); renderState(msg.data); });
+
+  // AI plan
+  new ROSLIB.Topic({ ros, name: '/planner/last_plan', messageType: 'std_msgs/msg/String' })
+    .subscribe(msg => { markSeen('/planner/last_plan'); renderPlan(JSON.parse(msg.data)); });
+
+  // Map
+  new ROSLIB.Topic({ ros, name: '/map', messageType: 'nav_msgs/msg/OccupancyGrid' })
+    .subscribe(msg => {
+      markSeen('/map');
+      lastMapInfo = {
+        width: msg.info.width, height: msg.info.height,
+        resolution: msg.info.resolution,
+        originX: msg.info.origin.position.x, originY: msg.info.origin.position.y,
+        data: msg.data,
+      };
+    });
+
+  // Target pose
+  new ROSLIB.Topic({ ros, name: '/camera/target_pose', messageType: 'geometry_msgs/msg/PoseStamped' })
+    .subscribe(msg => {
+      markSeen('/camera/target_pose');
+      lastTargetPose = { x: msg.pose.position.x, y: msg.pose.position.y };
+    });
+
+  // Annotated camera image
+  new ROSLIB.Topic({ ros, name: '/camera/annotated_image/compressed', messageType: 'sensor_msgs/msg/CompressedImage' })
+    .subscribe(msg => { markSeen('/camera/annotated_image/compressed'); drawCameraImage(msg); });
+
+  // Rosout log, filtered to known nodes
+  new ROSLIB.Topic({ ros, name: '/rosout', messageType: 'rcl_interfaces/msg/Log' })
+    .subscribe(msg => {
+      if (!KNOWN_NODES.has(msg.name)) return;
+      appendLog(msg.name, msg.level, msg.msg, msg.stamp.sec);
+    });
+
+  // Robot pose via TF (map -> base_link)
+  tfClient = new ROSLIB.TFClient({ ros, fixedFrame: 'map', angularThres: 0.005, transThres: 0.005, rate: 5.0 });
+  tfClient.subscribe('base_link', tf => {
+    lastRobotPose = {
+      x: tf.translation.x, y: tf.translation.y,
+      yaw: quatToYaw(tf.rotation),
+    };
+  });
+}
+
+// auto-connect on load
+connect();
+</script>
+</body>
+</html>

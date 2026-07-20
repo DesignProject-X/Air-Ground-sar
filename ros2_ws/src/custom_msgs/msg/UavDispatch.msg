@@ -1,0 +1,3 @@
+geometry_msgs/Point start_position
+float32 start_yaw
+string direction

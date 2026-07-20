@@ -3,3 +3,18 @@ scheduler_node:
     max_retries: 3
     recon_timeout_s: 60    # UAV mapping upper bound (seconds)
     nav_timeout_s: 120     # Ground navigation upper bound (seconds)
+
+    # zone name -> UAV search start point + wall-following direction
+    zone_names: ["zone_a", "zone_b", "default"]
+    zone_a.start_x: 0.0
+    zone_a.start_y: 0.0
+    zone_a.start_yaw: 0.0
+    zone_a.direction: "right"
+    zone_b.start_x: 1.5
+    zone_b.start_y: 0.0
+    zone_b.start_yaw: 1.57
+    zone_b.direction: "left"
+    default.start_x: 0.0
+    default.start_y: 0.0
+    default.start_yaw: 0.0
+    default.direction: "right"

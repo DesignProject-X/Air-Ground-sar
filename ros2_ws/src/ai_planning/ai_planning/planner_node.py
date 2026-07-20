@@ -1,5 +1,8 @@
+import json
+
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 from std_msgs.msg import String
 from custom_msgs.msg import TaskCommand, TaskItem
 
@@ -137,6 +140,14 @@ class PlannerNode(Node):
         self.create_subscription(String, '/planner/feedback', self._on_feedback, 10)
 
         self.pub = self.create_publisher(TaskCommand, '/scheduler/task_command', 10)
+        # TRANSIENT_LOCAL so a dashboard connecting after the plan was
+        # published still sees the last plan, not just future ones.
+        # TRANSIENT_LOCAL是为了让在方案发布之后才连上的仪表盘,也能看到
+        # 最后一次的方案,而不是只能看到之后新发的。
+        self.pub_plan = self.create_publisher(
+            String, '/planner/last_plan',
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                       history=HistoryPolicy.KEEP_LAST))
 
         self.get_logger().info('AI Planning Layer started. Waiting for operator command...')
 
@@ -176,6 +187,12 @@ class PlannerNode(Node):
             task_cmd.sequence.append(item)
 
         self.pub.publish(task_cmd)
+        self.pub_plan.publish(String(data=json.dumps({
+            'command': command,
+            'intent': result['intent'],
+            'goal_zone': result.get('goal_zone', ''),
+            'tasks': result['tasks'],  # each has task/agent/reason
+        })))
         self.get_logger().info(
             f'Task command published: intent={task_cmd.intent}, '
             f'goal_zone={task_cmd.goal_zone}, {len(task_cmd.sequence)} task(s).')
