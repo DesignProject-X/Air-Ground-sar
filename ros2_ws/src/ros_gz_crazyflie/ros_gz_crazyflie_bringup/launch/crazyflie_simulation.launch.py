@@ -53,7 +53,7 @@ def generate_launch_description():
         launch_arguments={'gz_args': PathJoinSubstitution([
             pkg_project_gazebo,
             'worlds',
-            'crazyflie_world.sdf -r'
+            'maze_world.sdf -r'
         ])}.items(),
     )
 
@@ -72,7 +72,7 @@ def generate_launch_description():
         executable='control_services',
         output='screen',
         parameters=[
-            {'hover_height': 0.5},
+            {'hover_height': 0.25},
             {'robot_prefix': '/crazyflie'},
             {'incoming_twist_topic': '/cmd_vel'},
             {'max_ang_z_rate': 0.4},

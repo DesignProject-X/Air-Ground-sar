@@ -46,9 +46,12 @@ class ControlServices(Node):
             new_cmd_msg.angular.y = msg.angular.y
             new_cmd_msg.angular.z = msg.angular.z
 
-        # If not flying and receiving a velocity height command, takeoff
+        # If not flying and receiving a velocity height command, takeoff.
+        # Climb slowly to keep overshoot past takeoff_height small - there's
+        # no deceleration phase here, it just stops once the height check
+        # below trips, so a slower climb rate directly means less overshoot.
         if height_command > 0 and not self.is_flying:
-            new_cmd_msg.linear.z = 0.5
+            new_cmd_msg.linear.z = 0.1
             if self.current_pose.position.z > self.takeoff_height:
                 # stop going up if height is reached
                 new_cmd_msg.linear.z = 0.0
