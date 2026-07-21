@@ -31,11 +31,11 @@ def generate_launch_description():
 
     # Start a velocity multiplexer node for the crazyflie
     crazyflie_vel_mux = Node(
-            package='crazyflie',
-            executable='vel_mux.py',
+            package='crazyflie_examples',
+            executable='vel_mux',
             name='vel_mux',
             output='screen',
-            parameters=[{'hover_height': 0.3},
+            parameters=[{'hover_height': 0.2},
                         {'incoming_twist_topic': '/cmd_vel'},
                         {'robot_prefix': 'crazyflie_real'},]
         )

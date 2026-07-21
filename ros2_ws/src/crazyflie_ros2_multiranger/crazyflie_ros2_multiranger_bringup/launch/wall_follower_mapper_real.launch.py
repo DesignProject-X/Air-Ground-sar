@@ -31,14 +31,26 @@ def generate_launch_description():
 
     # Start a velocity multiplexer node for the crazyflie
     crazyflie_vel_mux = Node(
-            package='crazyflie',
-            executable='vel_mux.py',
+            package='crazyflie_examples',
+            executable='vel_mux',
             name='vel_mux',
             output='screen',
-            parameters=[{'hover_height': 0.3},
+            parameters=[{'hover_height': 0.2},
                         {'incoming_twist_topic': '/cmd_vel'},
                         {'robot_prefix': 'crazyflie_real'},]
         )
+
+    # Bridge the mapper's static 'map' tree to the driver's live 'world' tree
+    # (crazyflie_server broadcasts a live world->crazyflie_real transform,
+    # but simple_mapper only ever links map->crazyflie_real/odom - without
+    # this, they're two disconnected TF trees and rviz can't show the live
+    # drone frame while Fixed Frame is 'map'.)
+    map_world_bridge = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='map_world_bridge',
+        arguments=['0', '0', '0', '0', '0', '0', 'map', 'world']
+    )
 
     # start a simple mapper node
     simple_mapper = Node(
@@ -52,7 +64,8 @@ def generate_launch_description():
         ]
     )
 
-    # start a wall following node with a delay of 5 seconds
+    # start a wall following node; it waits idle for a start_wall_following
+    # service call (issued by cf_mission_node) instead of auto-starting
     wall_following = Node(
         package='crazyflie_ros2_multiranger_wall_following',
         executable='wall_following_multiranger',
@@ -61,10 +74,20 @@ def generate_launch_description():
         parameters=[
             {'robot_prefix': 'crazyflie_real'},
             {'use_sim_time': False},
-            {'delay': 5.0},
             {'max_turn_rate': 0.5},
-            {'max_forward_speed': 0.3},
-            {'wall_following_direction': 'right'}
+            {'max_forward_speed': 0.15},
+        ]
+    )
+
+    # bridge scheduler dispatch (start point + direction) and camera target
+    # detection to real flight control
+    cf_mission = Node(
+        package='cf_controller',
+        executable='cf_mission_node',
+        name='cf_mission_node',
+        output='screen',
+        parameters=[
+            {'robot_prefix': 'crazyflie_real'},
         ]
     )
 
@@ -87,7 +110,9 @@ def generate_launch_description():
     return LaunchDescription([
         crazyflie_real,
         crazyflie_vel_mux,
+        map_world_bridge,
         simple_mapper,
         wall_following,
+        cf_mission,
         rviz
         ])

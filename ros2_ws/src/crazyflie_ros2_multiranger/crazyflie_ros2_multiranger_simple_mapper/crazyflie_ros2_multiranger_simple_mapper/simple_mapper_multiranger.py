@@ -22,9 +22,26 @@ import tf_transformations
 import math
 import numpy as np
 
-GLOBAL_SIZE_X = 20.0
-GLOBAL_SIZE_Y = 20.0
-MAP_RES = 0.1
+# Sized for the 1.5x1.2m maze (with margin) instead of the original 20x20m
+# default, which was leftover from a much larger reference environment - at
+# 0.1m resolution the maze's 2cm-thick walls and 0.6m corridors were barely
+# resolvable (a wall was a fifth of a cell wide).
+# 0.03m turned out too fine in practice: the multiranger only casts 4 fixed
+# rays per scan (front/back/left/right), so the map has always had small gaps
+# between what each ray actually swept - at 0.1m those gaps were sub-pixel
+# and invisible, but at 0.03m they're several pixels wide and show up as
+# visible unmapped patches along the flown path. 0.05m is a middle ground:
+# still resolves the walls far better than the original 0.1m, without
+# exaggerating the beam-coverage gaps as much.
+# 按1.5x1.2m的迷宫实际尺寸(留一点边界)调整,而不是原来抄自更大场地的20x20m
+# 默认值——0.1m分辨率下,2cm厚的墙只有格子边长的五分之一,基本分辨不出来。
+# 0.03m实测偏细了:multiranger每次扫描只发4条固定方向的射线(前后左右),地图
+# 本来就存在射线扫不到的缝隙——0.1m分辨率下这些缝隙不到一个像素,看不出来,
+# 但0.03m下缝隙有好几个像素宽,飞过的路径上会看到明显没建到图的空白。0.05m
+# 是折中:比原来0.1m清楚很多,又不会把射线覆盖不到的缝隙放大得太明显。
+GLOBAL_SIZE_X = 2.0
+GLOBAL_SIZE_Y = 2.0
+MAP_RES = 0.08
 
 
 class SimpleMapperMultiranger(Node):
