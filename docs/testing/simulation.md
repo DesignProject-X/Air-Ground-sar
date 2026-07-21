@@ -44,6 +44,28 @@ This starts five nodes in a single terminal:
 
 For the feedback replanning test (Test Case 3), individual nodes are needed — see below.
 
+### A more realistic alternative: simulated flight instead of `fake_uav_node`
+
+```bash
+ros2 launch sar_bringup simulate_system_gazebo_uav.launch.py
+```
+
+Same pipeline, but swaps `fake_uav_node` (a static pre-baked map, 3s fake
+delay) for a real Gazebo Crazyflie that actually climbs, wall-follows the
+maze, and builds a `MapResult` from genuine simulated flight data via
+`cf_controller/cf_mission_node_sim.py`. `fake_camera_node` is dropped too —
+`cf_mission_node_sim` fakes the target-detection signal itself (tied to
+real flight progress via a `mapping_duration_sec` timer, not a flat delay),
+and running both would double-publish `/camera/target_pose`. Everything
+else (`scheduler_node`, `fake_ground_node`, `planner_node`) is unchanged.
+
+Mapping takes `cf_mission_node_sim.py`'s `mapping_duration_sec` (120s
+default, not overridden here) so Test Case 1 below takes noticeably longer
+than with `fake_uav_node`'s 3s - `scheduler_node`'s `RECON_TIMEOUT_S = 140s`
+leaves margin above that for climb/handoff before the mapping timer even
+starts. Trigger it the same way. Requires GPU capable of running Gazebo's
+rendering.
+
 ---
 
 ## Test Cases
@@ -119,12 +141,15 @@ With no `fake_ground_node` running, `load_existing_map` isn't available
 either, so the scheduler logs a warning and falls straight through to
 `aerial_recon` (same net effect as the fake ground node reporting "no saved
 map", just without a service to call). The scheduler will then retry
-`aerial_recon` three times (each after `RECON_TIMEOUT_S = 60s`), then
-publish a failure message to `/planner/feedback`. The planner picks this up
-and replans — the LLM should drop `aerial_recon` and select an alternative
-(e.g. `request_backup`) given that the UAV is reported as unresponsive.
+`aerial_recon` three times (each after `RECON_TIMEOUT_S = 140s` — sized to
+leave margin above the simulated-UAV mapping duration used elsewhere in
+this project, see the note above; it doesn't matter here since nothing
+ever responds either way), then publish a failure message to
+`/planner/feedback`. The planner picks this up and replans — the LLM
+should drop `aerial_recon` and select an alternative (e.g.
+`request_backup`) given that the UAV is reported as unresponsive.
 
-Expected output (planner, after ~180s):
+Expected output (planner, after ~420s):
 ```
 Feedback received: Mission failed: aerial_recon timed out ... Replanning...
 Task command published: ... 1 task(s).

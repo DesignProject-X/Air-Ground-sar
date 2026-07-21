@@ -2,9 +2,10 @@
 
 Runs the full pipeline against a real TurtleBot3 ground robot and a real
 Intel RealSense camera (no `fake_agents` ground/camera stubs). The UAV side
-still uses `fake_uav_node` unless a real or simulated Crazyflie flight is
-wired in (see "UAV recon options" below) — this guide covers the ground
-robot + base station half, which is what's actually been tested.
+defaults to `fake_uav_node`, but a real simulated Crazyflie flight
+(Gazebo) can stand in instead — see "UAV recon options" below, which is
+now tested end-to-end (ground robot + real camera + simulated aerial
+recon all running together).
 
 ---
 
@@ -146,18 +147,102 @@ each is in this project:
    `sar_bringup/maps/maze_map.yaml` and reports it as the recon result
    after a simulated 3s flight. Run standalone: `ros2 run fake_agents
    fake_uav_node`.
-2. **Real Crazyflie** — `cf_controller/cf_mission_node.py` bridges
+2. **Simulated Crazyflie (Gazebo)** (tested end-to-end with a real ground
+   robot + real camera) — `cf_controller/cf_mission_node_sim.py` bridges
+   `UavDispatch` to the same Gazebo Crazyflie + `simple_mapper_multiranger`
+   + `wall_following_multiranger` stack used for pure-simulation testing
+   (see [`simulation.md`](simulation.md)), reporting a real `MapResult`
+   built from actual simulated flight instead of a static map file. Run
+   standalone:
+   ```bash
+   ros2 launch cf_controller sim_uav_recon.launch.py fake_target_signal:=false
+   ```
+   `fake_target_signal:=false` is required here — by default this launch
+   also fakes a `/camera/target_pose` after mapping (useful when testing
+   the sim UAV in isolation against `fake_agents`, see `simulation.md`),
+   which would race the real camera's own detection and could make the
+   scheduler skip `WAITING_TARGET` before the real camera ever gets a
+   chance to fire. With it off, this node only ever reports the map;
+   target detection is left entirely to `target_detector_node`. See
+   "Hybrid test: simulated UAV + real ground robot + real camera" below
+   for the full procedure.
+3. **Real Crazyflie** — `cf_controller/cf_mission_node.py` bridges
    `UavDispatch` → takeoff → wall-following → target detection →
    `MapResult`, wired via `crazyflie_ros2_multiranger_bringup`'s
    `wall_follower_mapper_real.launch.py`. Message types match what the
    scheduler expects, but this path hasn't been exercised against real
    flight hardware in this project yet.
-3. **Simulated Crazyflie (Gazebo)** — the flight/mapping side exists
-   (`wall_follower_mapper_simulation.launch.py`) but nothing bridges it to
-   `/uav/dispatch` / `/uav/map_result` yet; `simple_mapper_multiranger`
-   publishes a plain `OccupancyGrid`, not wrapped in `MapResult`. A
-   simulation equivalent of `cf_mission_node.py` would need to be written
-   before this path is usable with the scheduler.
+
+---
+
+## Hybrid test: simulated UAV + real ground robot + real camera
+
+Runs the Gazebo-simulated Crazyflie for aerial mapping while the ground
+robot and target detection are both real hardware — the closest this
+project gets to a full mission without an actual flight-ready Crazyflie.
+
+```bash
+# On the ground robot (unchanged)
+ros2 launch ground_controller robot_bringup.launch.py
+
+# On the base station: real camera + scheduler + planner (unchanged)
+ros2 launch sar_bringup base_station_real.launch.py
+
+# Also on the base station (needs GPU for Gazebo's rendering - run
+# elsewhere on the same ROS_DOMAIN_ID if the base station's GPU is busy)
+ros2 launch cf_controller sim_uav_recon.launch.py fake_target_signal:=false
+```
+
+Place the robot, publish its initial pose (see "Initial pose" above), then
+trigger a mission the same way as any other test (operator command via the
+dashboard, or a direct `TaskCommand` publish - see
+[`simulation.md`](simulation.md)'s Test Case 1 for the exact message).
+
+Expected sequence: the simulated drone climbs and wall-follows the maze for
+`cf_mission_node_sim`'s `mapping_duration_sec` (120s default), reports
+`MapResult` with no fake target attached, the scheduler moves
+`RECON → MAP_READY` and injects the map into the real ground robot, the
+robot starts real Nav2 navigation, and at some point the real camera
+(`target_detector_node`) detects the target and publishes
+`/camera/target_pose` — independently of the mapping timer, since the two
+are decoupled (mapping completion and target detection are unrelated
+events that just happen to both feed the scheduler). If the camera happens
+to already have the target in view when the mission starts (e.g. a fixed
+overhead view of a static scene), it may detect it well before the drone
+finishes mapping - the scheduler caches this and skips `WAITING_TARGET`
+the instant `MAP_READY` is reached, so the robot can start moving very
+soon after the map arrives. That's expected behavior (see `scheduler_node
+._proceed_after_map_ready`), not a bug — if you want to test the "robot
+searches after arriving" path instead, keep the target out of the camera's
+view until the mission is already in `NAVIGATING`.
+
+**`scheduler_node.RECON_TIMEOUT_S` is 140s** specifically to leave margin
+above the sim UAV's 120s default mapping duration (plus a few seconds of
+climb/handoff before the mapping timer even starts) - if you shorten
+`mapping_duration_sec` for a faster test, this doesn't need to change, but
+if you lengthen it past ~130s, `RECON_TIMEOUT_S` needs to grow with it or
+the scheduler will retry before the drone finishes.
+
+**Known gotcha - `/cmd_vel` collision.** `cf_hover_sim.py` and
+`wall_following_multiranger.py` (both third-party, from
+`crazyflie_ros2_multiranger`) hardcode their Twist publisher as the bare,
+unnamespaced `/cmd_vel`, assuming the simulated drone is the only robot on
+the network. On real hardware both machines share one `ROS_DOMAIN_ID` (see
+"Two machines, two workspaces" above) - and a real TurtleBot3 base
+controller also listens on that same bare `/cmd_vel`. Reproduced live: the
+instant the sim drone started flying, the real ground robot started moving
+too, with the scheduler still in `RECON` and no map ever sent - the sim
+drone's raw hover/wall-following Twist was reaching the real robot's
+motors directly. `sim_uav_recon.launch.py` now remaps `/cmd_vel` to
+`/crazyflie/hover_cmd_vel` for every node that touches it (including
+`control_services`, started via the included
+`crazyflie_simulation.launch.py`) via a `launch_ros.actions.SetRemap` at
+the top of the launch description - `control_services`'s own
+`/crazyflie/cmd_vel` output (a different, already-namespaced topic, what
+actually bridges to Gazebo) is untouched. If this ever gets edited, verify
+with `ros2 topic info /cmd_vel` right after launch - it should report
+`Unknown topic` (nothing publishing or subscribing to the bare name at
+all).
 
 ---
 

@@ -92,6 +92,10 @@ source install/setup.bash
 # 4. Launch (simulation — no hardware required)
 export GOOGLE_API_KEY=your_key_here
 ros2 launch sar_bringup simulate_system.launch.py
+
+# 4b. Or, for a more realistic run with an actual simulated (Gazebo) flight
+# instead of a static pre-baked map, swap in:
+ros2 launch sar_bringup simulate_system_gazebo_uav.launch.py
 ```
 
 ### Real hardware
@@ -109,6 +113,8 @@ ros2 launch ground_controller robot_bringup.launch.py
 # On the base station
 ros2 launch sar_bringup base_station_real.launch.py
 ros2 run fake_agents fake_uav_node   # stand-in for a real/sim UAV recon flight
+# or, for a real simulated (Gazebo) flight instead of a static map:
+# ros2 launch cf_controller sim_uav_recon.launch.py fake_target_signal:=false
 
 # Dashboard (base station)
 cd ros2_ws/src/sar_bringup/web && python3 -m http.server 8080
@@ -228,6 +234,9 @@ source install/setup.bash
 # 4. 启动（仿真模式，无需硬件）
 export GOOGLE_API_KEY=your_key_here
 ros2 launch sar_bringup simulate_system.launch.py
+
+# 4b. 或者,想要更贴近真实的效果、用真正的仿真(Gazebo)飞行代替静态预烤地图:
+ros2 launch sar_bringup simulate_system_gazebo_uav.launch.py
 ```
 
 ### 真实硬件
@@ -243,6 +252,8 @@ ros2 launch ground_controller robot_bringup.launch.py
 # 在基站上
 ros2 launch sar_bringup base_station_real.launch.py
 ros2 run fake_agents fake_uav_node   # 真实/仿真无人机建图的替身
+# 或者,用真正的仿真(Gazebo)飞行代替静态地图:
+# ros2 launch cf_controller sim_uav_recon.launch.py fake_target_signal:=false
 
 # 仪表盘（基站）
 cd ros2_ws/src/sar_bringup/web && python3 -m http.server 8080

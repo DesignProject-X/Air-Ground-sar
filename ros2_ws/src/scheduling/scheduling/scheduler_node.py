@@ -24,7 +24,15 @@ class State(Enum):
 class SchedulerNode(Node):
 
     MAX_RETRIES = 3
-    RECON_TIMEOUT_S = 60
+    # cf_mission_node_sim's mapping_duration_sec defaults to 120s (see
+    # cf_controller/cf_mission_node_sim.py) plus a few seconds of climb/
+    # handoff before it even starts the timer - 60s cut that off before the
+    # sim UAV finished mapping. 140s leaves margin above the full 120s.
+    # cf_mission_node_sim的mapping_duration_sec默认是120秒(见
+    # cf_controller/cf_mission_node_sim.py),而且计时器开始前还有几秒爬升/
+    # 交接的时间——60秒会在仿真无人机建图完成前就把它切断。140秒在120秒
+    # 之上留了余量。
+    RECON_TIMEOUT_S = 140
     WAITING_TARGET_TIMEOUT_S = 120
     NAV_TIMEOUT_S = 120
 

@@ -1,7 +1,7 @@
 scheduler_node:
   ros__parameters:
     max_retries: 3
-    recon_timeout_s: 60    # UAV mapping upper bound (seconds)
+    recon_timeout_s: 140   # UAV mapping upper bound (seconds)
     nav_timeout_s: 120     # Ground navigation upper bound (seconds)
 
     # zone name -> UAV search start point + wall-following direction

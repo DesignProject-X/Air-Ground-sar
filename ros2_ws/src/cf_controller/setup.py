@@ -30,6 +30,7 @@ setup(
             'cf_hover_real = cf_controller.cf_hover_real:main',
             'cf_hover_real_continue = cf_controller.cf_hover_real_continue:main',
             'cf_hover_sim = cf_controller.cf_hover_sim:main',
+            'cf_mission_node_sim = cf_controller.cf_mission_node_sim:main',
         ],
     },
 )

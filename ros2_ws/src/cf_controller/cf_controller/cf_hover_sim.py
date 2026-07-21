@@ -54,6 +54,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from std_srvs.srv import Trigger
 from custom_msgs.srv import StartWallFollowing
+from custom_msgs.msg import UavDispatch
 
 
 # Flight parameters / 飞行参数
@@ -109,9 +110,21 @@ class CfHoverSim(Node):
     def __init__(self):
         super().__init__('cf_hover_sim')
 
+        # Dispatch-driven mode (default): wait for /uav/dispatch instead of
+        # climbing immediately on startup, and take the wall-follow direction
+        # from the dispatch message's `direction` field rather than a fixed
+        # launch-time parameter - this is what lets a simulated recon mission
+        # actually start in response to the scheduler, instead of always
+        # auto-flying the moment the launch file comes up regardless of
+        # whether anyone asked for a mission yet.
+        # 派发驱动模式(默认):等 /uav/dispatch 而不是一启动就自动爬升,巡墙
+        # 方向从派发消息的 direction 字段读,而不是写死的启动参数——这样仿真
+        # 建图任务才是真的响应调度器才开始,而不是不管有没有人要建图、launch
+        # 文件一起来就自己飞。
         self.declare_parameter('auto_wallfollow_direction', '')
         self.auto_wallfollow_direction = self.get_parameter(
             'auto_wallfollow_direction').value
+        self.dispatch_driven = not self.auto_wallfollow_direction
 
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.odom_sub = self.create_subscription(
@@ -120,20 +133,29 @@ class CfHoverSim(Node):
             Trigger, ROBOT_PREFIX + '/stop_hover', self.stop_hover_cb)
 
         self.wall_follow_client = None
-        if self.auto_wallfollow_direction:
+        if not self.dispatch_driven:
             self.wall_follow_client = self.create_client(
                 StartWallFollowing, ROBOT_PREFIX + '/start_wall_following')
 
         self.current_height = 0.0
 
         # State machine / 状态机:
-        #   plain hover:  'climb' -> 'hover' -> 'land' -> 'done'
-        #   auto handoff: 'climb' -> 'handoff' -> 'done'
-        self.state = 'climb'
+        #   plain hover:      'climb' -> 'hover' -> 'land' -> 'done'
+        #   auto handoff:     'climb' -> 'handoff' -> 'done'
+        #   dispatch-driven:  'idle' -> 'climb' -> 'handoff' -> 'done'
+        self.state = 'idle' if self.dispatch_driven else 'climb'
+
+        if self.dispatch_driven:
+            self.create_subscription(
+                UavDispatch, '/uav/dispatch', self._on_dispatch, 10)
 
         self.timer = self.create_timer(0.1, self.control_loop)
 
-        if self.auto_wallfollow_direction:
+        if self.dispatch_driven:
+            self.get_logger().info(
+                'CrazyFlie sim hover node started. Waiting for /uav/dispatch... '
+                '/ 仿真悬停节点启动,等待 /uav/dispatch...')
+        elif self.auto_wallfollow_direction:
             self.get_logger().info(
                 f'CrazyFlie sim hover node started. Climbing to {HOVER_HEIGHT}m, '
                 f'then handing off to wall_following (direction='
@@ -147,6 +169,28 @@ class CfHoverSim(Node):
             self.get_logger().info(
                 f'Call {ROBOT_PREFIX}/stop_hover (std_srvs/Trigger) to land. '
                 f'/ 调用 {ROBOT_PREFIX}/stop_hover 服务(std_srvs/Trigger)触发降落')
+
+    def _on_dispatch(self, msg: UavDispatch):
+        if self.state != 'idle':
+            self.get_logger().warn(
+                f'Dispatch received but already busy (state={self.state}). Ignored. '
+                f'/ 收到派发指令,但当前不在空闲状态,忽略')
+            return
+        self.auto_wallfollow_direction = msg.direction or 'left'
+        self.wall_follow_client = self.create_client(
+            StartWallFollowing, ROBOT_PREFIX + '/start_wall_following')
+        # The timer gets cancel()ed at the end of a previous handoff (see
+        # control_loop) - reset() re-arms it for this new mission instead of
+        # leaving this node silently dead for any dispatch after the first.
+        # timer 在上一次交接结束时被cancel()了(见control_loop)——reset()
+        # 让它为这次新任务重新计时,不然第一次派发之后这个节点就永远默默失效了。
+        self.timer.reset()
+        self.state = 'climb'
+        self.get_logger().info(
+            f'Dispatch received (direction={self.auto_wallfollow_direction}). '
+            f'Climbing to {HOVER_HEIGHT}m. '
+            f'/ 收到派发指令(direction={self.auto_wallfollow_direction}),'
+            f'开始爬升到{HOVER_HEIGHT}m')
 
     def odom_callback(self, msg: Odometry):
         self.current_height = msg.pose.pose.position.z
@@ -211,8 +255,14 @@ class CfHoverSim(Node):
             # 就在发起调用的这个 tick 里取消 timer——我们发布的最后一条指令就是
             # 上面那条 vz=0.0 的悬停指令,所以巡墙节点的 timer 接管之后,不会有
             # 残留的正向 z 指令被 control_services 继续复用。
+            # Dispatch-driven mode goes back to 'idle' (not 'done') so a
+            # later /uav/dispatch for a repeat mission is accepted instead of
+            # being ignored by _on_dispatch's "already busy" check.
+            # 派发驱动模式回到'idle'(不是'done'),这样之后再收到一次
+            # /uav/dispatch(比如重复测试)才会被接受,而不是被
+            # _on_dispatch里"正忙"的检查挡掉。
             self.timer.cancel()
-            self.state = 'done'
+            self.state = 'idle' if self.dispatch_driven else 'done'
             self.get_logger().info('Handoff complete. / 交接完成')
 
         elif self.state == 'hover':
