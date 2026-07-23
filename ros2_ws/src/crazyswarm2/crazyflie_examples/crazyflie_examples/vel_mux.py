@@ -22,8 +22,12 @@ from geometry_msgs.msg import Twist
 import rclpy
 
 
-HOVER_HEIGHT = 0.5
-TAKEOFF_DURATION = 2.0
+HOVER_HEIGHT = 0.3
+# 0.3m/1.0s = 0.3 m/s climb/descent rate - matches the rate confirmed safe via
+# manual Takeoff service testing in this project's small physical maze, where
+# a slower climb (0.3m/3.0s = 0.1 m/s) spent too long low to the ground and
+# was destabilized by propwash/ground-effect turbulence off the nearby walls.
+TAKEOFF_DURATION = 1.0
 LAND_HEIGHT = 0.05
 
 
@@ -62,10 +66,25 @@ def main():
 
         if received_first_cmd_vel and has_taken_off:
             if msg_cmd_vel.linear.z >= 0:
+                # Pre-negate yaw here to cancel out crazyflie_server's own
+                # `-1.0 * degrees(...)` flip in its hover-setpoint handling
+                # (crazyflie_server_py: _cmd_hover_changed) before it reaches
+                # the firmware. The sim path (ros_gz_crazyflie's
+                # control_services.py) passes angular.z straight through with
+                # no such flip, so without this the same
+                # wall_following_direction_value turns one way in Gazebo and
+                # the opposite way on the real drone.
+                # 这里提前把yaw取反一次,抵消crazyflie_server自己在处理hover
+                # setpoint时做的那次`-1.0 * degrees(...)`取反(见
+                # crazyflie_server_py的_cmd_hover_changed)。仿真那条路径
+                # (ros_gz_crazyflie的control_services.py)是原样传递
+                # angular.z、没有做这次取反的,所以不加这一行的话,同一个
+                # wall_following_direction_value在Gazebo里和真机上转的方向
+                # 会正好相反。
                 cf.cmdHover(
                     vx=msg_cmd_vel.linear.x,
                     vy=msg_cmd_vel.linear.y,
-                    yaw_rate=msg_cmd_vel.angular.z,
+                    yaw_rate=-msg_cmd_vel.angular.z,
                     z_distance=HOVER_HEIGHT,
                 )
             else:
