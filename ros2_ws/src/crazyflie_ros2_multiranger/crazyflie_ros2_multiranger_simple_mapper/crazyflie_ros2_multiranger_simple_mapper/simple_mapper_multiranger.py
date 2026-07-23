@@ -33,14 +33,24 @@ import numpy as np
 # visible unmapped patches along the flown path. 0.05m is a middle ground:
 # still resolves the walls far better than the original 0.1m, without
 # exaggerating the beam-coverage gaps as much.
+# The grid is centered on wherever the drone happens to take off (map/odom
+# origin), not on the maze's geometric center - on real hardware the takeoff
+# spot is rarely dead-center, so 2.0m (only 1.0m of margin from takeoff point
+# to any edge) proved too tight: a wall further than 1.0m from takeoff falls
+# outside the grid entirely. 3.0m gives 1.5m of margin in every direction,
+# comfortably covering the 1.5x1.2m maze even from a corner takeoff spot.
 # 按1.5x1.2m的迷宫实际尺寸(留一点边界)调整,而不是原来抄自更大场地的20x20m
 # 默认值——0.1m分辨率下,2cm厚的墙只有格子边长的五分之一,基本分辨不出来。
 # 0.03m实测偏细了:multiranger每次扫描只发4条固定方向的射线(前后左右),地图
 # 本来就存在射线扫不到的缝隙——0.1m分辨率下这些缝隙不到一个像素,看不出来,
 # 但0.03m下缝隙有好几个像素宽,飞过的路径上会看到明显没建到图的空白。0.05m
 # 是折中:比原来0.1m清楚很多,又不会把射线覆盖不到的缝隙放大得太明显。
-GLOBAL_SIZE_X = 2.0
-GLOBAL_SIZE_Y = 2.0
+# 这个栅格是以无人机起飞点(map/odom原点)为中心的,不是以迷宫的几何中心为
+# 中心——真机测试起飞点很少刚好在正中间,2.0m(起飞点到边缘只有1.0m余量)
+# 实测偏紧:只要一面墙离起飞点超过1.0m就会落在栅格外。3.0m能在每个方向留出
+# 1.5m余量,就算起飞点靠近迷宫一角,也能把整个1.5x1.2m的迷宫装下。
+GLOBAL_SIZE_X = 3.0
+GLOBAL_SIZE_Y = 3.0
 MAP_RES = 0.08
 
 
@@ -130,19 +140,57 @@ class SimpleMapperMultiranger(Node):
         #
         if self.position_update is False:
             return
+        # Grid cells beyond [0, map_width)/[0, map_height) are outside the
+        # tracked area entirely - a plain Python list silently wraps negative
+        # indices around to the far end instead of raising, so without this
+        # check a point beyond one edge gets drawn onto the opposite edge
+        # instead of being dropped (reproduced on real hardware: a wall
+        # further than the grid's half-size from the takeoff point showed up
+        # mirrored onto the opposite side of the map).
+        # 超出[0, map_width)/[0, map_height)范围的格子已经不在建图范围内了——
+        # 普通Python列表对负数索引是悄悄从末尾环绕回来的,不会报错,所以没有
+        # 这个检查的话,超出一侧边界的点会被画到地图的另一侧,而不是被丢弃
+        # (真机上复现过:离起飞点距离超过栅格半径的墙,会被镜像画到地图的
+        # 另一侧)。
+        map_width = int(GLOBAL_SIZE_X / MAP_RES)
+        map_height = int(GLOBAL_SIZE_Y / MAP_RES)
         for i in range(len(data)):
             #self.get_logger().info(f"Point {i} {data[i]}")
-            point_x = int((data[i][0] - GLOBAL_SIZE_X / 2.0) / MAP_RES)
-            point_y = int((data[i][1] - GLOBAL_SIZE_Y / 2.0) / MAP_RES)
+            # The grid's cell (0, 0) sits at world (-GLOBAL_SIZE/2, -GLOBAL_SIZE/2)
+            # (see msg.info.origin below), so converting a world coordinate to
+            # an array index means ADDING half the grid size, not subtracting
+            # it - subtracting always lands on a negative index for any point
+            # near the map center. That negative index used to silently wrap
+            # around to the correct-looking cell via Python's negative-list-
+            # indexing (list[-n] == list[len-n]), which is what made this look
+            # like it worked before - but it only wrapped to the *correct*
+            # place by coincidence for points close enough to center, and
+            # wrapped to the *wrong* place once a point was far enough out
+            # (the original bug report). Adding the bounds check above without
+            # fixing this sign made every point compute a negative (now
+            # rejected) index, hence the fully empty map.
+            # 栅格的(0,0)格对应世界坐标(-GLOBAL_SIZE/2, -GLOBAL_SIZE/2)(见下面
+            # 的msg.info.origin),所以世界坐标转数组索引应该是"加上"半个栅格
+            # 尺寸,不是"减去"——减法对任何靠近地图中心的点算出来都是负数索引。
+            # 这个负数索引以前能"看起来正常",是因为Python负数列表索引会悄悄
+            # 从末尾环绕回来(list[-n] == list[len-n]),对离中心足够近的点刚好
+            # 环绕到了"看起来对"的格子——但这只是离中心近时的巧合,点一旦超出
+            # 这个范围,环绕到的就是错误的格子(也就是最初报告的那个bug)。上面
+            # 加了边界检查却没修这个符号,导致每个点算出来都是负数索引、都被
+            # 边界检查挡掉,建出来的图就完全是空的。
+            point_x = int((data[i][0] + GLOBAL_SIZE_X / 2.0) / MAP_RES)
+            point_y = int((data[i][1] + GLOBAL_SIZE_Y / 2.0) / MAP_RES)
             points_x.append(point_x)
             points_y.append(point_y)
             position_x_map = int(
-                (self.position[0] - GLOBAL_SIZE_X / 2.0) / MAP_RES)
+                (self.position[0] + GLOBAL_SIZE_X / 2.0) / MAP_RES)
             position_y_map = int(
-                (self.position[1] - GLOBAL_SIZE_Y / 2.0) / MAP_RES)
+                (self.position[1] + GLOBAL_SIZE_Y / 2.0) / MAP_RES)
             for line_x, line_y in self.bresenham_line(position_x_map, position_y_map, point_x, point_y):
-                self.map[line_y * int(GLOBAL_SIZE_X / MAP_RES) + line_x] = 0
-            self.map[point_y * int(GLOBAL_SIZE_X / MAP_RES) + point_x] = 100
+                if 0 <= line_x < map_width and 0 <= line_y < map_height:
+                    self.map[line_y * map_width + line_x] = 0
+            if 0 <= point_x < map_width and 0 <= point_y < map_height:
+                self.map[point_y * map_width + point_x] = 100
 
         msg = OccupancyGrid()
         msg.header.stamp = self.get_clock().now().to_msg()
