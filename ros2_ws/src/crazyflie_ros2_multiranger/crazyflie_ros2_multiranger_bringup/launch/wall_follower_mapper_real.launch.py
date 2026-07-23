@@ -14,6 +14,33 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     # Configure ROS nodes for launch
+    # TEMP DIAGNOSTIC: vel_mux.py connects to the same Crazyflie over its own
+    # independent crazyflie_py/Crazyswarm() radio link, entirely separate
+    # from crazyflie_server's own cflib connection - i.e. two simultaneous,
+    # independent connections to one physical drone over the same dongle at
+    # once. Suspected cause of a real-hardware takeoff going sideways
+    # (isolated takeoff service call - not through wall_following/vel_mux's
+    # own Twist path at all - still drifted, and the exact same takeoff
+    # mechanism worked fine standalone through cfclient once vel_mux/
+    # crazyflie_server weren't both connected). This flag lets vel_mux be
+    # left out to test crazyflie_server on its own, isolating whether the
+    # dual connection is the actual cause before deciding on a permanent fix.
+    # 临时诊断用:vel_mux.py是用它自己独立的crazyflie_py/Crazyswarm()射频连接
+    # 接到同一台Crazyflie上的,跟crazyflie_server自己的cflib连接完全是两条
+    # 独立的连接——也就是说,同一个加密狗、同一台无人机,同时被两个独立连接
+    # 占用。怀疑这是真机测试里"单独调起飞服务(完全没走wall_following/
+    # vel_mux那条Twist路径)结果飞偏了,而同样的起飞机制单独在cfclient里
+    # (vel_mux/crazyflie_server都没连着)却工作正常"这个现象的原因。这个
+    # 开关能让vel_mux先不起,单独测crazyflie_server,在决定怎么永久修复之前,
+    # 先确认是不是真的是这个双重连接导致的。
+    enable_vel_mux_arg = DeclareLaunchArgument(
+        'enable_vel_mux', default_value='true',
+        description=(
+            'Whether to start vel_mux (needed for wall-following flight, '
+            'which streams Twist to /cmd_vel). Set to false to isolate '
+            'crazyflie_server on its own - e.g. to test whether vel_mux\'s '
+            'own independent radio connection to the same Crazyflie is '
+            'interfering with plain Takeoff/GoTo service calls.'))
 
     # Setup project paths'''
     pkg_project_crazyswarm2 = get_package_share_directory('crazyflie')
@@ -37,7 +64,8 @@ def generate_launch_description():
             output='screen',
             parameters=[{'hover_height': 0.2},
                         {'incoming_twist_topic': '/cmd_vel'},
-                        {'robot_prefix': 'crazyflie_real'},]
+                        {'robot_prefix': 'crazyflie_real'},],
+            condition=IfCondition(LaunchConfiguration('enable_vel_mux')),
         )
 
     # Bridge the mapper's static 'map' tree to the driver's live 'world' tree
@@ -108,6 +136,7 @@ def generate_launch_description():
             )
 
     return LaunchDescription([
+        enable_vel_mux_arg,
         crazyflie_real,
         crazyflie_vel_mux,
         map_world_bridge,
