@@ -3,7 +3,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 from enum import Enum, auto
 
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, Empty, String
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid
 from custom_msgs.msg import TaskCommand, MapResult, UavDispatch
@@ -18,12 +18,11 @@ class State(Enum):
     WAITING_TARGET = auto()
     NAVIGATING = auto()
     DONE = auto()
-    RETRY = auto()
+    FAILED = auto()
 
 
 class SchedulerNode(Node):
 
-    MAX_RETRIES = 3
     # cf_mission_node_sim's mapping_duration_sec defaults to 120s (see
     # cf_controller/cf_mission_node_sim.py) plus a few seconds of climb/
     # handoff before it even starts the timer - 60s cut that off before the
@@ -44,7 +43,6 @@ class SchedulerNode(Node):
         self.task_names: list[str] = []
         self.map_result: MapResult | None = None
         self.target_pose: PoseStamped | None = None
-        self.retry_count = 0
         self.tick_counter = 0
         self.zone_cfg: dict = {}
 
@@ -74,6 +72,12 @@ class SchedulerNode(Node):
                                  self._on_goal_reached, 10)
         self.create_subscription(String, '/nav_status',
                                  self._on_nav_status, 10)
+        # Manual way out of FAILED, which is terminal by design (see
+        # _enter_failed) - without this the node would need restarting to run
+        # another mission.
+        # 从 FAILED 手动脱出的入口,FAILED 是有意设计成终止态的(见
+        # _enter_failed)——没有这个入口,想再跑一次任务就只能重启节点。
+        self.create_subscription(Empty, '/scheduler/reset', self._on_reset, 10)
 
         self.pub_uav = self.create_publisher(UavDispatch, '/uav/dispatch', 10)
         self.pub_goal = self.create_publisher(PoseStamped, '/ground/goal_pose', 10)
@@ -128,8 +132,20 @@ class SchedulerNode(Node):
                 'start_yaw': self.get_parameter(f'{name}.start_yaw').value,
                 'direction': self.get_parameter(f'{name}.direction').value,
             }
+        # Only reached when 'default' is absent from zone_names - normally
+        # params.yaml supplies it and this is dead. Kept in step with the
+        # default.direction there ('left') on purpose: having the same zone
+        # answer 'right' here and 'left' there would be silently wrong in
+        # exactly the case that is already hard to notice, i.e. params.yaml
+        # not being passed to this node at all (which has happened before -
+        # zone_b then fell back to default and searched the wrong way round).
+        # 只有 zone_names 里没有 'default' 时才会走到——正常情况下 params.yaml
+        # 会提供它,这段是死代码。特意跟那边的 default.direction('left')保持
+        # 一致:同一个 zone 在这里答 'right'、在那里答 'left',恰恰会在最难
+        # 察觉的那种情况下悄悄出错——也就是 params.yaml 根本没传给这个节点的
+        # 时候(这个之前发生过:zone_b 于是落回 default,朝反方向搜索了)。
         self.zones.setdefault('default', {
-            'start_x': 0.0, 'start_y': 0.0, 'start_yaw': 0.0, 'direction': 'right',
+            'start_x': 0.0, 'start_y': 0.0, 'start_yaw': 0.0, 'direction': 'left',
         })
 
     def _lookup_zone(self, goal_zone: str) -> dict:
@@ -147,7 +163,6 @@ class SchedulerNode(Node):
         self.task_cmd = msg
         self.task_names = [t.task for t in msg.sequence]
         self.zone_cfg = self._lookup_zone(msg.goal_zone)
-        self.retry_count = 0
         self.get_logger().info(
             f'Task command received: intent={msg.intent}, goal_zone={msg.goal_zone}, '
             f'sequence={self.task_names}')
@@ -169,7 +184,19 @@ class SchedulerNode(Node):
             self._try_reuse_saved_map()
 
     def _try_reuse_saved_map(self):
-        if not self.load_existing_map_client.wait_for_service(timeout_sec=2.0):
+        # Cross-machine service discovery (no multicast, static CycloneDDS
+        # peers - see docs/testing/real_hardware.md) can take longer than a
+        # couple seconds, especially right after either machine's launch
+        # just started. Reproduced live: both machines' domain ID/peer config
+        # were correct, but a task command sent soon after startup still hit
+        # this timeout and dispatched the UAV instead of reusing the
+        # already-saved map, simply because discovery hadn't caught up yet.
+        # 跨机器的服务发现(没开多播,靠CycloneDDS静态peer配置——见
+        # docs/testing/real_hardware.md)有时候就是需要比几秒更久,尤其是
+        # 任一台机器的launch刚启动不久的时候。实测复现过:两边的域ID/peer
+        # 配置都是对的,但启动不久就发任务指令,还是会撞上这个超时,转而去
+        # 派无人机、而不是复用已经存在的地图,单纯是因为服务发现还没跟上。
+        if not self.load_existing_map_client.wait_for_service(timeout_sec=10.0):
             self.get_logger().warn(
                 'load_existing_map service not available on ground robot. '
                 'Dispatching aerial recon.')
@@ -225,8 +252,8 @@ class SchedulerNode(Node):
             self.get_logger().info('Ground robot reached target. Mission complete.')
             self._transition(State.DONE)
         else:
-            self.get_logger().warn('goal_reached=False. Triggering retry.')
-            self._transition(State.RETRY)
+            self.get_logger().warn('goal_reached=False. Mission failed.')
+            self._transition(State.FAILED)
 
     def _on_nav_status(self, msg: String):
         if self.state != State.NAVIGATING:
@@ -234,29 +261,30 @@ class SchedulerNode(Node):
         status = msg.data.upper()
         self.get_logger().info(f'Navigation status: {status}')
         if status in ('FAILED', 'ABORTED', 'CANCELLED'):
-            self.get_logger().warn(f'Navigation failed ({status}). Triggering retry.')
-            self._transition(State.RETRY)
+            self.get_logger().warn(f'Navigation failed ({status}). Mission failed.')
+            self._transition(State.FAILED)
 
     def _tick(self):
         self.tick_counter += 1
 
         if self.state == State.RECON:
             if self.tick_counter >= self.RECON_TIMEOUT_S:
-                self.get_logger().warn('RECON timeout. Triggering retry.')
-                self._transition(State.RETRY)
+                self.get_logger().warn('RECON timeout. Mission failed.')
+                self._transition(State.FAILED)
 
         elif self.state == State.WAITING_TARGET:
             if self.tick_counter >= self.WAITING_TARGET_TIMEOUT_S:
-                self.get_logger().warn('WAITING_TARGET timeout. Triggering retry.')
-                self._transition(State.RETRY)
+                self.get_logger().warn('WAITING_TARGET timeout. Mission failed.')
+                self._transition(State.FAILED)
 
         elif self.state == State.NAVIGATING:
             if self.tick_counter >= self.NAV_TIMEOUT_S:
-                self.get_logger().warn('NAVIGATING timeout. Triggering retry.')
-                self._transition(State.RETRY)
+                self.get_logger().warn('NAVIGATING timeout. Mission failed.')
+                self._transition(State.FAILED)
 
     def _transition(self, new_state: State):
-        self.get_logger().info(f'State transition: {self.state.name} --> {new_state.name}')
+        previous = self.state
+        self.get_logger().info(f'State transition: {previous.name} --> {new_state.name}')
         self.state = new_state
         self.tick_counter = 0
         self._publish_state()
@@ -271,8 +299,8 @@ class SchedulerNode(Node):
             self._enter_navigating()
         elif new_state == State.DONE:
             self._enter_done()
-        elif new_state == State.RETRY:
-            self._enter_retry()
+        elif new_state == State.FAILED:
+            self._enter_failed(previous)
 
     def _enter_recon(self):
         dispatch = UavDispatch()
@@ -290,7 +318,7 @@ class SchedulerNode(Node):
     def _enter_map_ready(self):
         if self.map_result is None:
             self.get_logger().error('map_result is None. Cannot inject map.')
-            self._transition(State.RETRY)
+            self._transition(State.FAILED)
             return
 
         grid = self.map_result.map
@@ -300,7 +328,7 @@ class SchedulerNode(Node):
         if not self.save_map_client.wait_for_service(timeout_sec=2.0):
             self.get_logger().error(
                 'save_map service not available on ground robot. Cannot inject map.')
-            self._transition(State.RETRY)
+            self._transition(State.FAILED)
             return
 
         req = SaveMap.Request()
@@ -316,7 +344,7 @@ class SchedulerNode(Node):
         if result is None or not result.success:
             msg = result.message if result is not None else 'service call failed'
             self.get_logger().error(f'Ground robot failed to save/load map: {msg}')
-            self._transition(State.RETRY)
+            self._transition(State.FAILED)
             return
 
         self.get_logger().info(f'Ground robot confirmed map saved and loaded: {result.message}')
@@ -339,7 +367,7 @@ class SchedulerNode(Node):
     def _enter_navigating(self):
         if self.target_pose is None:
             self.get_logger().error('target_pose is None. Cannot navigate.')
-            self._transition(State.RETRY)
+            self._transition(State.FAILED)
             return
 
         target = self.target_pose
@@ -358,33 +386,57 @@ class SchedulerNode(Node):
         self.task_names = []
         self.map_result = None
         self.target_pose = None
-        self.retry_count = 0
         self.state = State.IDLE
         self._publish_state()
 
-    def _enter_retry(self):
-        self.retry_count += 1
-        if self.retry_count > self.MAX_RETRIES:
-            self.get_logger().error(
-                f'Max retries ({self.MAX_RETRIES}) exceeded. Mission failed. Returning to IDLE.')
-            intent = self.task_cmd.intent if self.task_cmd else 'unknown'
-            self.pub_feedback.publish(String(data=(
-                f'Mission failed after {self.MAX_RETRIES} retries. '
-                f'UAV or camera unresponsive. Original intent: {intent}.'
-            )))
-            self.task_cmd = None
-            self.task_names = []
-            self.map_result = None
-            self.target_pose = None
-            self.retry_count = 0
-            self.state = State.IDLE
-            self._publish_state()
-        else:
-            self.get_logger().warn(
-                f'Retry {self.retry_count}/{self.MAX_RETRIES}. Re-dispatching UAV...')
-            self.map_result = None
-            self.target_pose = None
-            self._transition(State.RECON)
+    def _enter_failed(self, failed_from: State):
+        # Terminal: report and stay put. This used to re-dispatch the UAV from
+        # scratch, which meant a failure in ANY step restarted the whole
+        # mission from aerial recon - a navigation failure threw away an
+        # already-flown map and an already-detected target and sent the drone
+        # back up, even though both were still perfectly valid. It also made
+        # the real fault much harder to see, since the logs immediately filled
+        # with a fresh recon run. Now the run stops here so the failing state
+        # can be inspected, and /scheduler/reset (dashboard button) is what
+        # returns it to IDLE.
+        # map_result / target_pose are deliberately kept: they still describe
+        # what this run achieved, and nothing downstream reads them while in
+        # FAILED. The robot's own saved map and map_server were never touched
+        # by the old reset either - only this node's bookkeeping was.
+        # 终止态:只上报,不动作。这里原来会从头重新派发无人机,导致任何一步
+        # 失败都会让整个任务从建图重来——一次导航失败就把已经飞完的地图和已经
+        # 识别到的目标全部作废、无人机重新起飞,而那两样其实都还是好的。它还
+        # 让真正的故障更难看清,因为日志立刻被新一轮建图刷满。现在流程就停在
+        # 这里,方便检查失败当时的状态,由 /scheduler/reset(网页按钮)负责
+        # 把它放回 IDLE。
+        # map_result / target_pose 特意保留:它们仍然记录着这一轮的成果,而且
+        # FAILED 状态下没有任何下游会去读。小车自己保存的地图和 map_server
+        # 本来也从不受这个重置影响——被清掉的一直只是这个节点的记账。
+        intent = self.task_cmd.intent if self.task_cmd else 'unknown'
+        self.get_logger().error(
+            f'Mission failed in {failed_from.name}. Staying in FAILED - publish to '
+            f'/scheduler/reset (or use the dashboard button) to return to IDLE.')
+        self.pub_feedback.publish(String(data=(
+            f'Mission failed during {failed_from.name}. Original intent: {intent}.'
+        )))
+
+    def _on_reset(self, msg: Empty):
+        # Manual escape from FAILED (or from a run that is simply unwanted).
+        # Clears this node's bookkeeping only - the robot keeps its saved map,
+        # so a following task command can still reuse it via
+        # _try_reuse_saved_map instead of re-flying.
+        # 手动从 FAILED(或任何不想要的流程中)脱出。只清这个节点自己的记账
+        # ——小车保存的地图还在,所以下一条任务指令仍然可以通过
+        # _try_reuse_saved_map 复用它,不必重新飞一遍。
+        self.get_logger().info(
+            f'Reset requested in {self.state.name}. Clearing task state, returning to IDLE.')
+        self.task_cmd = None
+        self.task_names = []
+        self.map_result = None
+        self.target_pose = None
+        self.tick_counter = 0
+        self.state = State.IDLE
+        self._publish_state()
 
 
 def main(args=None):
