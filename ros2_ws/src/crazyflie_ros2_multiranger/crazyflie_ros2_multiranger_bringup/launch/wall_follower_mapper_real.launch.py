@@ -9,11 +9,40 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 
-from launch_ros.actions import Node
+from launch_ros.actions import Node, SetRemap
+
+# Known /cmd_vel collision (see docs/testing/real_hardware.md): wall_following
+# and vel_mux both hardcode the bare, unnamespaced '/cmd_vel', assuming the
+# drone is the only robot on the network. On real hardware this launch runs
+# alongside a real ground robot under the same ROS_DOMAIN_ID, and a real
+# TurtleBot3 base controller also listens on that same bare '/cmd_vel' -
+# reproduced live: the instant the drone started wall-following, the ground
+# robot started moving too, in sync, with the scheduler still stuck in RECON
+# and no map ever sent - the drone's raw hover/wall-following Twist was
+# reaching the real robot's motors directly, nothing to do with navigation or
+# mission state at all. Already fixed for the simulated drone in
+# sim_uav_recon.launch.py; this applies the exact same remap here for the
+# real one.
+# 已知的/cmd_vel冲突问题(见docs/testing/real_hardware.md):wall_following和
+# vel_mux都硬编码用了没加命名空间的裸'/cmd_vel',假设无人机是网络上唯一的
+# 机器人。真机测试时这个launch是跟真实地面机器人在同一个ROS_DOMAIN_ID下一起
+# 跑的,真实TurtleBot3的底盘控制器也监听同一个裸'/cmd_vel'——实测复现过:
+# 无人机一开始沿墙飞,地面机器人也同步跟着动了,当时调度器还卡在RECON、
+# 地图压根没发过去——无人机原始的悬停/巡墙Twist直接被真实机器人的电机收走
+# 了,跟导航、任务状态毫无关系。仿真无人机那边在sim_uav_recon.launch.py里
+# 已经修过这个问题了,这里给真机也套用完全一样的remap。
+REAL_CMD_VEL_TOPIC = '/crazyflie/hover_cmd_vel'
 
 
 def generate_launch_description():
     # Configure ROS nodes for launch
+    # Applies for the rest of this LaunchDescription, including nodes started
+    # by the crazyflie launch.py include below - see the module docstring
+    # comment above for why this is needed.
+    # 对这个LaunchDescription剩下的部分都生效,包括下面include的crazyflie
+    # launch.py里启动的节点——原因见上面模块开头的注释。
+    cmd_vel_remap = SetRemap(src='/cmd_vel', dst=REAL_CMD_VEL_TOPIC)
+
     # TEMP DIAGNOSTIC: vel_mux.py connects to the same Crazyflie over its own
     # independent crazyflie_py/Crazyswarm() radio link, entirely separate
     # from crazyflie_server's own cflib connection - i.e. two simultaneous,
@@ -57,6 +86,17 @@ def generate_launch_description():
     )
 
     # Start a velocity multiplexer node for the crazyflie
+    # assume_airborne=True: cf_mission_node already takes off and flies to
+    # the start position before ever calling start_wall_following, so
+    # vel_mux's own "first /cmd_vel -> takeoff" auto-takeoff would otherwise
+    # fire redundantly right as wall-following starts, sending a second
+    # takeoff to a drone already at hover height (observed to cause a
+    # dip-and-reclimb glitch at the start of every real wall-following run).
+    # assume_airborne=True:cf_mission_node在调用start_wall_following之前,
+    # 就已经让无人机起飞并飞到了起点,所以vel_mux自己"收到第一条/cmd_vel就
+    # 自动起飞"的逻辑,在这里每次都会对着一台已经在悬停高度的无人机多发一次
+    # 多余的起飞指令(实测会在每次真机沿墙飞行刚开始时造成一次"原地下降再
+    # 爬升"的诡异动作)。
     crazyflie_vel_mux = Node(
             package='crazyflie_examples',
             executable='vel_mux',
@@ -64,7 +104,8 @@ def generate_launch_description():
             output='screen',
             parameters=[{'hover_height': 0.2},
                         {'incoming_twist_topic': '/cmd_vel'},
-                        {'robot_prefix': 'crazyflie_real'},],
+                        {'robot_prefix': 'crazyflie_real'},
+                        {'assume_airborne': True},],
             condition=IfCondition(LaunchConfiguration('enable_vel_mux')),
         )
 
@@ -137,6 +178,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         enable_vel_mux_arg,
+        cmd_vel_remap,
         crazyflie_real,
         crazyflie_vel_mux,
         map_world_bridge,

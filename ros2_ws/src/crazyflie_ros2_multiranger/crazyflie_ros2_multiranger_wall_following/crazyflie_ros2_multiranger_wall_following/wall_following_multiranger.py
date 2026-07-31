@@ -73,6 +73,21 @@ class WallFollowingMultiranger(Node):
         self.wall_too_close_distance = self.get_parameter('wall_too_close_distance').value
         self.declare_parameter('wall_too_far_distance', 0.4)
         self.wall_too_far_distance = self.get_parameter('wall_too_far_distance').value
+        # How close the front sensor must read before a wall ahead counts as
+        # "reached" and triggers a turn - kept separate from
+        # reference_distance_from_wall/ranger_value_buffer (previously
+        # 0.25+0.2=0.45m) since those two are also reused for side-range
+        # checks unrelated to the front distance - see wall_following.py.
+        # Lowered from that 0.45m default to have the drone turn closer to
+        # the actual wall instead of well before reaching it, for better
+        # corridor coverage in this maze.
+        # 前方传感器多近才算"到墙了"、该转弯——跟reference_distance_from_wall/
+        # ranger_value_buffer(以前是0.25+0.2=0.45m)分开存,因为那两个参数还
+        # 被另外的侧方判断复用,跟前方距离无关——见wall_following.py。从原来
+        # 0.45m默认值调低,让无人机更贴近真实墙面才转弯,而不是离墙还远就转了,
+        # 这样在这个迷宫里走廊覆盖更完整。
+        self.declare_parameter('front_wall_detect_distance', 0.35)
+        self.front_wall_detect_distance = self.get_parameter('front_wall_detect_distance').value
         # Default direction, used until a start_wall_following call overrides
         # it. Note: this value is the *turning* direction while searching for
         # a wall, not which side the wall ends up on - 'left' makes it turn
@@ -115,6 +130,7 @@ class WallFollowingMultiranger(Node):
                 reference_distance_from_wall=self.reference_distance_from_wall,
                 wall_too_close_distance=self.wall_too_close_distance,
                 wall_too_far_distance=self.wall_too_far_distance,
+                front_wall_detect_distance=self.front_wall_detect_distance,
                 init_state=WallFollowing.StateWallFollowing.FORWARD)
         if self.timer is not None:
             self.timer.cancel()

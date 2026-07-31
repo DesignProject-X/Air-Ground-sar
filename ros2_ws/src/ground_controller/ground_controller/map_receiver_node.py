@@ -63,8 +63,24 @@ class MapReceiverNode(Node):
         # 匹配扫描,这正是喂初始位姿的时机,而不是要求手动发布、还得自己
         # 判断地图注入是不是已经完成了。
         self.declare_parameter('auto_publish_initial_pose', True)
-        self.declare_parameter('initial_pose_x', -0.405)
-        self.declare_parameter('initial_pose_y', -0.230)
+        # -0.1, 0.0: the ground robot's physical starting spot, in metres, in
+        # the drone-built map's coordinate frame (origin = the drone's takeoff
+        # point). Supersedes 0.54/0.5, and before that -0.405/-0.230, each of
+        # which matched a different placement.
+        # This has to match where the robot is actually put down: AMCL is
+        # seeded with it (see _publish_initial_pose), and a wrong seed was
+        # measured starting AMCL off at cov_xx=0.1767 - a ~0.42m standard
+        # deviation - still converging while Nav2 was already driving on it,
+        # which is how Nav2 came to report "reached" 0.32m short of the goal.
+        # -0.1, 0.0:地面机器人实际摆放起点,单位是米,坐标系是无人机建的那张
+        # 图(原点是无人机起飞点)。取代之前的 0.54/0.5,以及更早的
+        # -0.405/-0.230,那几组各自对应别的摆位。
+        # 这个值必须跟小车实际摆放的位置一致:AMCL 是拿它做初始播种的
+        # (见 _publish_initial_pose),而实测播错时 AMCL 起始
+        # cov_xx=0.1767——标准差约 0.42 米——Nav2 已经在这份还在收敛的定位上
+        # 开始行驶了,这就是它为什么会在距目标 0.32 米处就报"已到达"。
+        self.declare_parameter('initial_pose_x', -0.1)
+        self.declare_parameter('initial_pose_y', 0.0)
         self.declare_parameter('initial_pose_yaw', 0.0)
 
         self.map_yaml_path = self.get_parameter('map_yaml_path').value

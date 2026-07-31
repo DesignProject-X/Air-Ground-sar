@@ -44,6 +44,7 @@ class WallFollowing():
                  wait_for_measurement_seconds=1.0,
                  wall_too_close_distance=0.2,
                  wall_too_far_distance=0.4,
+                 front_wall_detect_distance=None,
                  init_state=StateWallFollowing.FORWARD):
         """
         __init__ function for the WallFollowing class
@@ -68,6 +69,8 @@ class WallFollowing():
         in_corner_angle is the angle the Crazyflie should turn when it is in the corner (in rad)
         wait_for_measurement_seconds is the time the Crazyflie should wait for a
             measurement before it starts the wall following demo (in s)
+        front_wall_detect_distance is how close the front sensor must read before a wall
+            ahead counts as "reached" (in m) - see the comment where it's assigned below
         init_state is the initial state of the Crazyflie (StateWallFollowing Enum)
         self.state is a shared state variable that is used to keep track of the current
             state of the Crazyflie's wall following
@@ -90,6 +93,24 @@ class WallFollowing():
         self.wait_for_measurement_seconds = wait_for_measurement_seconds
         self.wall_too_close_distance = wall_too_close_distance
         self.wall_too_far_distance = wall_too_far_distance
+        # Kept separate from ranger_value_buffer (default: same
+        # reference_distance_from_wall + ranger_value_buffer sum as before,
+        # so behavior is unchanged unless a caller explicitly overrides this)
+        # because ranger_value_buffer is also reused for two side-range checks
+        # (TURN_TO_FIND_WALL's 45-degree approach check, and the corner-align
+        # margin in command_turn_around_corner_and_adjust) that have nothing
+        # to do with how close the front wall needs to be before it counts as
+        # "reached" - tuning one shouldn't silently move the other.
+        # 跟ranger_value_buffer分开存(默认值沿用原来
+        # reference_distance_from_wall + ranger_value_buffer的和,不显式传入
+        # 的话行为不变),因为ranger_value_buffer还被另外两处侧方相关的判断复用
+        # (TURN_TO_FIND_WALL里45度接近墙的检查,以及
+        # command_turn_around_corner_and_adjust里转角对齐的容差)——这两处跟
+        # "前方多近算到墙了"没有关系,调其中一个不该悄悄带动另一个。
+        self.front_wall_detect_distance = (
+            front_wall_detect_distance
+            if front_wall_detect_distance is not None
+            else reference_distance_from_wall + ranger_value_buffer)
 
         self.first_run = True
         self.state = init_state
@@ -268,7 +289,24 @@ class WallFollowing():
         velocity_x and velocity_y is defined in m/s
         """
         velocity_x = self.max_forward_speed
-        rate_yaw = self.wall_following_direction_value * (-1 * velocity_x / radius)
+        # velocity_x / radius is the yaw rate needed to actually trace a
+        # circle of this radius at this speed - unlike every other turn
+        # command in this file, this one was never capped at max_turn_rate,
+        # so it silently exceeds it whenever max_forward_speed / radius >
+        # max_turn_rate (with the current defaults: 0.15 / 0.25 = 0.6 rad/s,
+        # 20% over max_turn_rate=0.5). A height crash was observed in this
+        # exact state with front/side both comfortably far (not a tight-
+        # corner squeeze), which an uncapped, faster-than-tested yaw rate is
+        # a more likely explanation for than geometry.
+        # velocity_x / radius是要在这个半径、这个速度下真正画出一个圆所需要
+        # 的偏航速率——跟本文件里其它所有转弯指令不同,这一处从来没有被
+        # max_turn_rate限幅过,所以只要max_forward_speed / radius >
+        # max_turn_rate就会悄悄超过它(按目前的默认值:0.15 / 0.25 = 0.6
+        # rad/s,比max_turn_rate=0.5高20%)。实测在这个状态下出现过高度骤降,
+        # 而且当时前方/侧方都不算近(不是被挤进窄墙角)——一个没限幅、比
+        # 测试过的转速更快的偏航速率,比几何空间不够更可能是原因。
+        capped_yaw_rate = min(velocity_x / radius, self.max_turn_rate)
+        rate_yaw = self.wall_following_direction_value * (-1 * capped_yaw_rate)
         velocity_y = 0.0
         check_distance_wall = self.value_is_close_to(
             self.reference_distance_from_wall, side_range, self.ranger_value_buffer)
@@ -326,7 +364,7 @@ class WallFollowing():
 
         # -------------- Handle state transitions ---------------- #
         if self.state == self.StateWallFollowing.FORWARD:
-            if front_range < self.reference_distance_from_wall + self.ranger_value_buffer:
+            if front_range < self.front_wall_detect_distance:
                 self.state = self.state_transition(self.StateWallFollowing.TURN_TO_FIND_WALL)
         elif self.state == self.StateWallFollowing.HOVER:
             print('hover')
@@ -435,7 +473,7 @@ class WallFollowing():
                 self._side_lost_since = None
             # If front range is small
             #    then corner is reached
-            if front_range < self.reference_distance_from_wall + self.ranger_value_buffer:
+            if front_range < self.front_wall_detect_distance:
                 if leg_duration < self.min_wall_leg_seconds:
                     self.short_wall_leg_count += 1
                 else:
@@ -443,7 +481,7 @@ class WallFollowing():
                 self.prev_heading = current_heading
                 self.state = self.state_transition(self.StateWallFollowing.ROTATE_IN_CORNER)
         elif self.state == self.StateWallFollowing.ROTATE_AROUND_WALL:
-            if front_range < self.reference_distance_from_wall + self.ranger_value_buffer:
+            if front_range < self.front_wall_detect_distance:
                 self.state = self.state_transition(self.StateWallFollowing.TURN_TO_FIND_WALL)
         elif self.state == self.StateWallFollowing.ROTATE_IN_CORNER:
             check_heading_corner = self.value_is_close_to(

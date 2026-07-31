@@ -10,7 +10,13 @@
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
   <depend>std_srvs</depend>
+  <!-- SetParameters, used to write the drone's kalman.resetEstimation firmware
+       parameter through crazyflie_server - see cf_mission_node._reset_estimator.
+       SetParameters,用来经由 crazyflie_server 写无人机的
+       kalman.resetEstimation 固件参数——见 cf_mission_node._reset_estimator。 -->
+  <depend>rcl_interfaces</depend>
   <depend>builtin_interfaces</depend>
   <depend>crazyflie_interfaces</depend>
   <depend>custom_msgs</depend>

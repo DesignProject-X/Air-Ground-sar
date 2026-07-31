@@ -41,6 +41,22 @@ def generate_launch_description():
     realsense_share_dir = get_package_share_directory('realsense2_camera')
     ground_controller_share_dir = get_package_share_directory('ground_controller')
     rosbridge_share_dir = get_package_share_directory('rosbridge_server')
+    # Without this, scheduler_node's _load_zones() only declares its
+    # zone_names default (['default'], direction='right') - 'zone_a'/'zone_b'
+    # are never registered as known zones at all, so a goal_zone of 'zone_b'
+    # silently falls back to 'default' with the wrong direction, instead of
+    # erroring loudly. Reproduced live: real-hardware full-pipeline test
+    # dispatched with goal_zone='zone_b' expecting direction='left', but the
+    # drone turned the opposite way at its first wall - this params file is
+    # what actually defines zone_a/zone_b (see sar_bringup/config/params.yaml).
+    # 不加这个的话,scheduler_node的_load_zones()只会声明zone_names的默认值
+    # (['default'],direction='right')——'zone_a'/'zone_b'根本没被注册成
+    # 已知的zone,所以goal_zone传'zone_b'会悄悄地退回到'default'、用错误的
+    # 方向,而不是报错。真机全流程测试实测复现过:派发时用goal_zone='zone_b'、
+    # 以为对应direction='left',结果无人机在第一面墙就转错了方向——真正定义
+    # zone_a/zone_b的正是这个参数文件(见sar_bringup/config/params.yaml)。
+    scheduler_params = os.path.join(
+        get_package_share_directory('sar_bringup'), 'config', 'params.yaml')
 
     realsense_camera = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -63,9 +79,6 @@ def generate_launch_description():
         executable='target_detector_node',
         name='target_detector_node',
         output='screen',
-        parameters=[{
-            'save_tile_debug_dir': '/home/sutd/01_SAP/Air-Ground-sar/ros2_ws/src/uav_vision/debug_output',
-        }],
     )
 
     coordinate_bridge = IncludeLaunchDescription(
@@ -84,6 +97,7 @@ def generate_launch_description():
         executable='scheduler_node',
         name='scheduler_node',
         output='screen',
+        parameters=[scheduler_params],
     )
 
     clock_sync_client = Node(

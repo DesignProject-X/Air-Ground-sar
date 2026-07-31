@@ -36,7 +36,28 @@ def main():
     timeHelper = swarm.timeHelper
     cf = swarm.allcfs.crazyflies[0]
 
-    has_taken_off = False
+    # When another node (e.g. cf_mission_node) already took the drone off
+    # and flew it to a start position before ever starting to publish
+    # /cmd_vel, this vel_mux's own "first cmd_vel -> takeoff" logic below is
+    # redundant - it fires anyway as soon as it sees the first nonzero
+    # command, sending a second takeoff to a drone already at hover_height,
+    # which was observed to cause a dip-and-reclimb glitch right as
+    # wall-following started. Set this true from launch in that case; the
+    # standalone teleop_twist_keyboard usage in this file's docstring (and
+    # simple_mapper_real.launch.py) has nothing else doing the takeoff, so it
+    # needs this to stay false and keep auto-taking-off on first command.
+    # 如果另一个节点(比如cf_mission_node)在还没开始发/cmd_vel之前,就已经
+    # 让无人机起飞并飞到了起点,那下面这段vel_mux自己"收到第一条cmd_vel就
+    # 起飞"的逻辑就是多余的——它还是会在看到第一条非零指令时触发,对一台
+    # 已经在悬停高度的无人机又发一次起飞,实测会在沿墙飞行刚开始时造成一次
+    # "原地下降再爬升"的诡异动作。这种情况下从launch里把这个参数设成true。
+    # 这个文件docstring里说的那种独立配合teleop_twist_keyboard手动遥控的用法
+    # (以及simple_mapper_real.launch.py)没有别的节点会去起飞,所以要保持
+    # false,让它继续在收到第一条指令时自动起飞。
+    swarm.allcfs.declare_parameter('assume_airborne', False)
+    assume_airborne = swarm.allcfs.get_parameter('assume_airborne').value
+
+    has_taken_off = assume_airborne
     received_first_cmd_vel = False
     msg_cmd_vel = Twist()
 
@@ -55,7 +76,8 @@ def main():
     swarm.allcfs.create_subscription(Twist, '/cmd_vel', cmd_vel_callback, 10)
 
     swarm.allcfs.get_logger().info(
-        f'vel_mux ready for {cf.prefix}, hover height: {HOVER_HEIGHT} m'
+        f'vel_mux ready for {cf.prefix}, hover height: {HOVER_HEIGHT} m, '
+        f'assume_airborne={assume_airborne}'
     )
 
     while rclpy.ok():

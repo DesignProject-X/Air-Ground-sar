@@ -17,4 +17,4 @@ scheduler_node:
     default.start_x: 0.0
     default.start_y: 0.0
     default.start_yaw: 0.0
-    default.direction: "right"
+    default.direction: "left"

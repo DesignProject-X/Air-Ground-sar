@@ -17,6 +17,7 @@ from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import StaticTransformBroadcaster
+from std_srvs.srv import SetBool
 
 import tf_transformations
 import math
@@ -81,6 +82,19 @@ class SimpleMapperMultiranger(Node):
 
         self.position_update = False
 
+        # Lets a mission node freeze mapping right before a landing (e.g.
+        # cf_mission_node stopping the search on reaching a checkpoint/
+        # timeout) so the brief attitude/position disturbance of the descent
+        # doesn't get drawn into the map - this node otherwise has no notion
+        # of "searching" vs "landing" and would keep mapping through both.
+        # 让任务节点在降落前先把建图冻结住(比如cf_mission_node因为到达检查点
+        # /超时而停止搜索的时候)——这个节点本身不知道"正在搜索"还是"正在
+        # 降落"的区别,不加这个开关的话,降落过程中短暂的姿态/位置扰动也会
+        # 被继续画进地图里。
+        self.mapping_active = True
+        self.set_mapping_active_srv = self.create_service(
+            SetBool, robot_prefix + '/set_mapping_active', self._set_mapping_active_cb)
+
         self.map = [-1] * int(GLOBAL_SIZE_X / MAP_RES) * \
             int(GLOBAL_SIZE_Y / MAP_RES)
         self.map_publisher = self.create_publisher(OccupancyGrid, robot_prefix + '/map',
@@ -130,7 +144,16 @@ class SimpleMapperMultiranger(Node):
         self.angles[2] = euler[2]
         self.position_update = True
 
+    def _set_mapping_active_cb(self, request, response):
+        self.mapping_active = request.data
+        self.get_logger().info(
+            f"Mapping {'resumed' if self.mapping_active else 'frozen'} via set_mapping_active")
+        response.success = True
+        return response
+
     def scan_subscribe_callback(self, msg):
+        if not self.mapping_active:
+            return
         self.ranges = msg.ranges
         self.range_max = msg.range_max
         data = self.rotate_and_create_points()
