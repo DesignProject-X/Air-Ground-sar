@@ -43,3 +43,11 @@ ros2_ws/src/uav_agnet/
 .vscode/
 .idea/
 .DS_Store
+
+# launcher.py runtime logs (web dashboard start buttons)
+ros2_ws/src/sar_bringup/web/.launcher_logs/
+# cflib's firmware TOC cache - written into whatever directory the drone
+# launch was started from, which is web/ when launched via launcher.py
+# cflib 的固件 TOC 缓存——它会写在无人机 launch 的启动目录下,经由 launcher.py
+# 启动时就是 web/
+ros2_ws/src/sar_bringup/web/cache/

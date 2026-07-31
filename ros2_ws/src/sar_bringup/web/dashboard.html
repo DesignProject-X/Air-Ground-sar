@@ -141,6 +141,34 @@
   .row > button { flex: none; }
   .row > input, .row > textarea { flex: 1; }
 
+  /* Startup buttons stack instead of sharing a .row: three labelled buttons
+     overflow the 340px left column side by side, and they are pressed in a
+     fixed order anyway, so a numbered vertical list reads the way they are
+     actually used.
+     启动按钮竖排,不跟 .row 共用:三个带文字的按钮并排会撑破 340px 的左栏,
+     而且它们本来就是按固定顺序点的,编号竖排更贴合实际用法。 */
+  .startup-row { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .startup-item { display: flex; gap: 6px; }
+  .startup-item > button:first-child { flex: 1; text-align: left; }
+  .startup-item > button > b {
+    display: inline-block;
+    width: 16px;
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+  .stop-btn { flex: none; width: 38px; padding: 8px 0; text-align: center; }
+  /* Disabled rather than hidden when there is nothing to stop, so the row
+     keeps its shape and the buttons never shift under the cursor.
+     没有东西可停时置灰而不是隐藏,这样行高不变,按钮也不会在鼠标底下跳位。 */
+  button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  button:disabled:hover { background: rgba(255,255,255,0.02); box-shadow: none; }
+  .stop-btn:not(:disabled) { color: var(--red); border-color: rgba(255,56,96,0.45); }
+  .stop-btn:not(:disabled):hover { background: rgba(255,56,96,0.18); box-shadow: 0 0 12px rgba(255,56,96,0.35); }
+
   /* AI plan */
   #planIntent { font-family: var(--mono); font-size: 0.85rem; color: var(--amber); }
   #planZone { font-family: var(--mono); font-size: 0.8rem; color: var(--text-dim); }
@@ -175,11 +203,15 @@
     box-shadow: 0 0 18px var(--cyan);
     font-weight: 700;
   }
-  .state-node.retry-active {
-    color: #1a0500;
-    background: var(--amber);
-    border-color: var(--amber);
-    box-shadow: 0 0 18px var(--amber);
+  /* FAILED is terminal now (the scheduler no longer auto-retries), so it
+     reads as red rather than the amber a transient retry used to warrant.
+     FAILED 现在是终止态(调度器不再自动重试),所以用红色,而不是原来那种
+     "临时重试"才合适的琥珀色。 */
+  .state-node.failed-active {
+    color: #2a0008;
+    background: var(--red);
+    border-color: var(--red);
+    box-shadow: 0 0 18px var(--red);
     font-weight: 700;
   }
 
@@ -253,11 +285,44 @@
 
   <!-- LEFT COLUMN -->
   <div>
+    <!-- Buttons hit launcher.py's own /api endpoints over plain HTTP, not
+         rosbridge: rosbridge is started by base_station_real.launch.py, so it
+         cannot be the thing that starts it, and it cannot spawn processes
+         anyway. These therefore work whether or not ROS is connected yet -
+         unlike every other control on this page.
+         这几个按钮走的是 launcher.py 自己的 /api 接口(普通 HTTP),不是
+         rosbridge:rosbridge 本身由 base_station_real.launch.py 启动,不可能
+         由它来启动自己,何况它也没法派生进程。所以跟本页其它控件不同,
+         这几个按钮在 ROS 还没连上时照样能用。 -->
+    <div class="panel">
+      <h2>System Startup <span class="hint">→ launcher.py</span></h2>
+      <div class="startup-row">
+        <div class="startup-item">
+          <button id="startRobotBtn" class="secondary"><b>1</b> 🚗 Ground Robot</button>
+          <button id="stopRobotBtn" class="secondary stop-btn" title="停止">■</button>
+        </div>
+        <div class="startup-item">
+          <button id="startBaseBtn" class="secondary"><b>2</b> 🖥️ Base Station</button>
+          <button id="stopBaseBtn" class="secondary stop-btn" title="停止">■</button>
+        </div>
+        <div class="startup-item">
+          <button id="startDroneBtn" class="secondary"><b>3</b> 🚁 UAV</button>
+          <button id="stopDroneBtn" class="secondary stop-btn" title="停止">■</button>
+        </div>
+        <div class="startup-item">
+          <button id="startRvizBtn" class="secondary"><b></b> 🗺️ RViz2</button>
+          <button id="stopRvizBtn" class="secondary stop-btn" title="停止">■</button>
+        </div>
+      </div>
+      <div id="launchStatus" class="empty-hint">launcher 未连接 (请运行 python3 launcher.py)</div>
+    </div>
+
     <div class="panel">
       <h2>Operator Command <span class="hint">→ /operator/command</span></h2>
       <textarea id="cmdInput" rows="3" placeholder="用自然语言下达任务,例如: 搜索左边房间,发现人员就靠近查看"></textarea>
       <div class="row">
         <button id="sendCmdBtn">Send Command</button>
+        <button id="sendPresetTaskBtn" class="secondary" title="直接发 TaskCommand 给 scheduler,跳过 AI 规划">⏩ Preset Task</button>
       </div>
     </div>
 
@@ -266,6 +331,13 @@
       <textarea id="feedbackInput" rows="2" placeholder="任务失败后,把原因/反馈填在这里触发重新规划"></textarea>
       <div class="row">
         <button id="sendFeedbackBtn" class="secondary">Send Feedback</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Debug: Stop UAV Search <span class="hint">→ /crazyflie_real/debug_stop_search</span></h2>
+      <div class="row">
+        <button id="debugStopSearchBtn" class="secondary">Force Stop Search</button>
       </div>
     </div>
 
@@ -280,7 +352,7 @@
   <!-- CENTER COLUMN -->
   <div>
     <div class="panel">
-      <h2>Mission State <span class="hint">← /scheduler/state</span></h2>
+      <h2>Mission State <span class="hint">← /scheduler/state　→ /scheduler/reset</span></h2>
       <div class="pipeline" id="pipeline">
         <div class="state-node" data-state="IDLE">IDLE</div>
         <div class="state-node" data-state="RECON">RECON</div>
@@ -288,7 +360,10 @@
         <div class="state-node" data-state="WAITING_TARGET">WAITING_TARGET</div>
         <div class="state-node" data-state="NAVIGATING">NAVIGATING</div>
         <div class="state-node" data-state="DONE">DONE</div>
-        <div class="state-node" data-state="RETRY">RETRY</div>
+        <div class="state-node" data-state="FAILED">FAILED</div>
+      </div>
+      <div class="row">
+        <button id="resetSchedulerBtn" class="secondary" title="把调度器清回 IDLE(FAILED 是终止态,不会自动恢复)">↺ Reset Scheduler</button>
       </div>
     </div>
 
@@ -454,9 +529,9 @@ function renderPlan(plan) {
 // ---------------------------------------------------------------------------
 function renderState(stateName) {
   document.querySelectorAll('.state-node').forEach(n => {
-    n.classList.remove('active', 'retry-active');
+    n.classList.remove('active', 'failed-active');
     if (n.dataset.state === stateName) {
-      n.classList.add(stateName === 'RETRY' ? 'retry-active' : 'active');
+      n.classList.add(stateName === 'FAILED' ? 'failed-active' : 'active');
     }
   });
 }
@@ -579,6 +654,34 @@ function setupTopics() {
   const cmdTopic = new ROSLIB.Topic({ ros, name: '/operator/command', messageType: 'std_msgs/msg/String' });
   const feedbackTopic = new ROSLIB.Topic({ ros, name: '/planner/feedback', messageType: 'std_msgs/msg/String' });
   const initPoseTopic = new ROSLIB.Topic({ ros, name: '/initialpose', messageType: 'geometry_msgs/msg/PoseWithCovarianceStamped' });
+  // The real camera is decoupled from the drone and can report a target at
+  // any time regardless of the drone's own exploration progress, so it
+  // can't be used as the UAV's "search complete" signal (see
+  // cf_mission_node.py's debug_stop_search subscription) - this button
+  // publishes to that separate topic instead, to manually end the UAV's
+  // search during testing.
+  // 真相机跟无人机是解耦的,不管无人机探索到哪都随时可能报出目标,所以不能
+  // 拿来当无人机的"搜索完成"信号(见cf_mission_node.py里的
+  // debug_stop_search订阅)——这个按钮改成发布到那个独立的话题,测试时用来
+  // 手动结束无人机的搜索。
+  const debugStopSearchTopic = new ROSLIB.Topic({ ros, name: '/crazyflie_real/debug_stop_search', messageType: 'std_msgs/msg/Empty' });
+  // Goes straight to the scheduler's own input topic, bypassing
+  // /operator/command and the planner that would normally turn free text
+  // into this same message - useful when testing the execution pipeline
+  // itself, where having the LLM re-derive the sequence each run is just an
+  // extra thing that can differ between attempts.
+  // 直接发到 scheduler 自己的输入话题,绕过 /operator/command 以及本来负责把
+  // 自然语言转成这条消息的规划器——测试执行链路本身的时候有用,那种场合下
+  // 让大模型每轮重新推一遍任务序列,只是多了一个每次可能不一样的变量。
+  const taskCommandTopic = new ROSLIB.Topic({ ros, name: '/scheduler/task_command', messageType: 'custom_msgs/msg/TaskCommand' });
+  // FAILED is terminal - the scheduler used to re-dispatch the UAV from
+  // scratch on any failure, which discarded a valid map and target and made
+  // the real fault hard to see. It now stops there, so this is what puts it
+  // back to IDLE for the next attempt.
+  // FAILED 是终止态——调度器原来会在任何失败时从头重新派发无人机,把本来
+  // 有效的地图和目标一起丢掉,也让真正的故障很难看清。现在它就停在那里,
+  // 所以要靠这个把它放回 IDLE,才能再试下一次。
+  const resetSchedulerTopic = new ROSLIB.Topic({ ros, name: '/scheduler/reset', messageType: 'std_msgs/msg/Empty' });
 
   document.getElementById('sendCmdBtn').onclick = () => {
     const text = document.getElementById('cmdInput').value.trim();
@@ -591,6 +694,28 @@ function setupTopics() {
     if (!text) return;
     feedbackTopic.publish({ data: text });
     appendLog('dashboard', 20, 'Feedback sent: ' + text, Date.now() / 1000);
+  };
+  document.getElementById('debugStopSearchBtn').onclick = () => {
+    debugStopSearchTopic.publish({});
+    appendLog('dashboard', 20, 'debug_stop_search published (manually ending UAV search)', Date.now() / 1000);
+  };
+  document.getElementById('resetSchedulerBtn').onclick = () => {
+    resetSchedulerTopic.publish({});
+    appendLog('dashboard', 20, 'scheduler reset published (back to IDLE)', Date.now() / 1000);
+  };
+  document.getElementById('sendPresetTaskBtn').onclick = () => {
+    taskCommandTopic.publish({
+      intent: 'search and rescue',
+      goal_zone: 'zone_b',
+      sequence: [
+        { task: 'aerial_recon', agent: 'uav' },
+        { task: 'map_injection', agent: 'ground' },
+        { task: 'navigate_to_target', agent: 'ground' },
+      ],
+    });
+    appendLog('dashboard', 20,
+      'task_command published (zone_b: aerial_recon -> map_injection -> navigate_to_target)',
+      Date.now() / 1000);
   };
   document.getElementById('sendInitPoseBtn').onclick = () => {
     const x = parseFloat(document.getElementById('initX').value);
@@ -660,6 +785,74 @@ function setupTopics() {
     };
   });
 }
+
+// ---------------------------------------------------------------------------
+// System startup buttons (launcher.py, plain HTTP - see the panel's comment)
+// ---------------------------------------------------------------------------
+const LAUNCH_TARGETS = {
+  robot: { start: 'startRobotBtn', stop: 'stopRobotBtn' },
+  base:  { start: 'startBaseBtn',  stop: 'stopBaseBtn'  },
+  drone: { start: 'startDroneBtn', stop: 'stopDroneBtn' },
+  rviz:  { start: 'startRvizBtn',  stop: 'stopRvizBtn'  },
+};
+const launchStatusEl = document.getElementById('launchStatus');
+
+function renderLaunchStatus(status) {
+  if (!status) {
+    launchStatusEl.textContent = 'launcher 未连接 (请运行 python3 launcher.py)';
+    // Nothing can be started or stopped without the launcher, so grey both
+    // out rather than letting a click fail with a network error.
+    // 没有 launcher 的话启动和停止都无从谈起,所以两个都置灰,而不是让点击
+    // 以一个网络错误收场。
+    for (const ids of Object.values(LAUNCH_TARGETS)) {
+      document.getElementById(ids.start).disabled = true;
+      document.getElementById(ids.stop).disabled = true;
+    }
+    return;
+  }
+  launchStatusEl.textContent = Object.entries(status)
+    .map(([name, state]) => `${name}: ${state}`).join('   ');
+  for (const [name, ids] of Object.entries(LAUNCH_TARGETS)) {
+    const running = status[name] === 'running';
+    document.getElementById(ids.start).disabled = running;
+    document.getElementById(ids.stop).disabled = !running;
+  }
+}
+
+async function pollLaunchStatus() {
+  try {
+    renderLaunchStatus(await (await fetch('/api/status')).json());
+  } catch (e) {
+    // Serving the page from plain http.server instead of launcher.py lands
+    // here - the buttons cannot work in that case, so say so rather than
+    // leaving them looking live.
+    // 用 http.server 而不是 launcher.py 发这个页面时会走到这里——那种情况下
+    // 按钮根本不可能工作,所以明说,而不是让它们看起来像是能用。
+    renderLaunchStatus(null);
+  }
+}
+
+async function launchAction(action, name) {
+  try {
+    const r = await (await fetch(`/api/${action}/${name}`, { method: 'POST' })).json();
+    appendLog('dashboard', r.ok ? 20 : 30, `${action} ${name}: ${r.message}`, Date.now() / 1000);
+    renderLaunchStatus(r.status);
+  } catch (e) {
+    appendLog('dashboard', 40, `${action} ${name} failed: launcher.py 没有在运行`, Date.now() / 1000);
+  }
+  // A stop only asks the process to shut down; poll shortly after so the
+  // row flips once it has actually exited rather than on the request alone.
+  // 停止只是请求进程关闭,所以稍后再查一次状态,让这一行在它真正退出之后
+  // 才翻转,而不是一发出请求就翻。
+  if (action === 'stop') setTimeout(pollLaunchStatus, 1500);
+}
+
+for (const [name, ids] of Object.entries(LAUNCH_TARGETS)) {
+  document.getElementById(ids.start).onclick = () => launchAction('launch', name);
+  document.getElementById(ids.stop).onclick = () => launchAction('stop', name);
+}
+pollLaunchStatus();
+setInterval(pollLaunchStatus, 3000);
 
 // auto-connect on load
 connect();
