@@ -28,6 +28,69 @@ all:
         frequency: 10 # Hz
       scan:
         frequency: 10 # Hz
+    # DIAGNOSTIC ONLY. Both blocks publish crazyflie_interfaces/LogDataGeneric
+    # on /crazyflie_real/<block name>, values in the same order as the vars
+    # list. Crazyflie log packets cap at 26 bytes, so each block is kept to
+    # at most 6 vars (worst case 4 bytes each = 24).
+    # 仅用于诊断。两个块都以crazyflie_interfaces/LogDataGeneric发布在
+    # /crazyflie_real/<块名>上,values顺序跟各自的vars顺序一致。Crazyflie
+    # 单个日志包上限26字节,所以每个块最多6个变量(最坏情况每个4字节=24)。
+    custom_topics:
+      # Investigating repeated height collapses at maze corners (~0.30m ->
+      # ~0.02m over 2-2.5s, then a hard overshoot to 0.5m+, twice ending in
+      # a crash). This block answered the first question: across a full
+      # flight |stateEstimate.z - range.zrange| averaged 0.014m and stayed
+      # under 0.011m through both collapses, so the EKF faithfully tracks the
+      # raw laser and is NOT diverging - the drone really is descending.
+      # It also ruled out a downward-laser geometry artifact: the collapses
+      # are smooth 2s ramps, not the step change a wall entering the sensor
+      # cone would produce (and at the observed 0.09-0.10m side clearance the
+      # cone cannot reach the wall anyway - that needs < h*sin(13.5deg) =
+      # 7cm). Kept running to confirm the gap stays ~0 on future flights.
+      # 用于排查迷宫墙角处反复出现的高度崩塌(约0.30m在2~2.5秒内掉到约
+      # 0.02m,随后猛冲到0.5m以上,有两次以摔机告终)。这个块已经回答了
+      # 第一个问题:整轮飞行里|stateEstimate.z - range.zrange|平均只有
+      # 0.014m,两次崩塌期间也都小于0.011m,说明EKF忠实跟随原始激光、并没有
+      # 发散——无人机是真的在下降。它同时排除了向下激光的几何假象:崩塌是
+      # 平滑的2秒斜坡,不是墙进入传感器视场锥时该有的阶跃(而且实测侧向余量
+      # 0.09~0.10m时锥根本够不到墙,那需要小于 h*sin(13.5°) = 7cm)。
+      # 继续保留,用来确认后续飞行里这个差值依然接近0。
+      height_debug:
+        frequency: 10 # Hz
+        vars: ["range.zrange", "stateEstimate.z", "stabilizer.roll",
+               "stabilizer.pitch"]
+      # Tests whether those descents are a thrust shortfall. The collapses
+      # bind to TURN_TO_ALIGN_TO_WALL / ROTATE_IN_CORNER - i.e. to sustained
+      # yaw with vx=vy=0 - rather than to any particular spot in the maze,
+      # which is why "the corners are too tight" never explained them.
+      # A quadrotor yaws by speeding up one rotation pair and slowing the
+      # other, so if the fast pair is already at its PWM ceiling the only way
+      # left to make yaw torque is to slow the other pair, and collective
+      # thrust - and therefore altitude - drops. All four motors are logged
+      # so both the collective level and the yaw split are visible, plus the
+      # battery, since how close to that ceiling the drone sits depends on it.
+      # Note the aggregate statistics do NOT yet support this: binned by
+      # flight thirds the mean climb rate was +0.008 / -0.003 / +0.017 m/s
+      # (no battery-like decay), and turning vs not turning differed by only
+      # -0.008 vs +0.023 m/s. So this block is here to settle the question,
+      # not to confirm a conclusion already reached - a motor pinned at its
+      # ceiling during a descent proves saturation, and motors with clear
+      # headroom while the drone still sinks rules the whole idea out.
+      # 用来检验这些下降是不是推力不足。崩塌绑定的是
+      # TURN_TO_ALIGN_TO_WALL / ROTATE_IN_CORNER 这两个状态——也就是
+      # vx=vy=0的持续原地偏航——而不是迷宫里某个具体位置,这也是"墙角太窄"
+      # 一直解释不通的原因。四旋翼靠加速一组桨、减速另一组来产生偏航,如果
+      # 加速的那组已经顶到PWM上限,唯一还能产生偏航力矩的办法就是把另一组
+      # 减下来,于是总推力、进而高度就掉了。四个电机全记录,这样总推力水平和
+      # 偏航时的差分都能看到;再加上电池电压,因为离那个上限还有多远取决于它。
+      # 注意目前的统计数据并不支持这个猜测:按飞行时段三等分,平均升降速率
+      # 是 +0.008 / -0.003 / +0.017 m/s(没有电池那种随时间衰减的趋势),
+      # 转弯与不转弯之间也只差 -0.008 对 +0.023 m/s。所以这个块是用来把问题
+      # 了结掉的,不是用来给已有结论背书——下降期间某个电机顶死在上限就能
+      # 坐实饱和,而电机明显还有余量却照样下沉就能彻底排除这条线。
+      thrust_debug:
+        frequency: 10 # Hz
+        vars: ["pm.vbat", "motor.m1", "motor.m2", "motor.m3", "motor.m4"]
   firmware_params:
     stabilizer:
       estimator: 2 # 1: complementary, 2: kalman
