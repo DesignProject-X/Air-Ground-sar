@@ -22,6 +22,7 @@ Usage / 用法:
 import rclpy
 from rclpy.duration import Duration
 from rclpy.node import Node
+from rclpy.time import Time
 from geometry_msgs.msg import PoseStamped, TransformStamped
 from tf2_ros import (
     Buffer, ConnectivityException, ExtrapolationException,
@@ -100,9 +101,37 @@ class CoordinateBridgeNode(Node):
                 f'"{msg.header.frame_id}" (expected "{self.marker_frame_id}").')
             return
 
+        # Look the transform up at the latest available time rather than at
+        # the detection's own stamp. Asking for the exact stamp is what the
+        # timestamp field is for, but it only works while detections keep
+        # arriving faster than tf2's ~10s buffer window - and detections here
+        # are sparse (measured live at one every ~17.8s, since most frames
+        # produce no marker+target pair). Combined with this callback running
+        # one message behind, every lookup asked for a stamp ~17.8s old, i.e.
+        # already aged out of the buffer, and failed with "extrapolation into
+        # the past" - not once did a target reach the scheduler, which then
+        # sat in WAITING_TARGET until it timed out.
+        # Using the latest transform is sound here rather than merely
+        # convenient: the ground robot has not been dispatched yet while the
+        # scheduler waits for a target, so map -> base_link is not changing,
+        # and base_link -> aruco_marker is static. Whichever instant is used,
+        # the answer is the same.
+        # 按"最新可用"而不是检测自己的时间戳去查变换。用精确时间戳本来才是
+        # 时间戳字段的用途,但那要求检测的间隔一直小于 tf2 约 10 秒的缓存窗口
+        # ——而这里的检测很稀疏(实测约 17.8 秒才有一条,因为大多数帧凑不齐
+        # marker+目标)。再叠加这个回调总是慢一拍,导致每次查的都是约 17.8 秒
+        # 前的时间戳,早就滑出缓存了,一律以 "extrapolation into the past"
+        # 失败——目标一次都没送到调度器,它就一直卡在 WAITING_TARGET 直到超时。
+        # 这里用最新变换不只是图省事,是确实成立:调度器等目标期间地面机器人
+        # 还没有被派发,map -> base_link 并不会变,而 base_link -> aruco_marker
+        # 本身就是静态的。取哪一时刻,结果都一样。
+        lookup = PoseStamped()
+        lookup.header.frame_id = msg.header.frame_id
+        lookup.header.stamp = Time().to_msg()  # 0 = latest available
+        lookup.pose = msg.pose
         try:
             transformed = self.tf_buffer.transform(
-                msg, self.map_frame_id,
+                lookup, self.map_frame_id,
                 timeout=Duration(seconds=self.transform_timeout_sec))
         except (LookupException, ConnectivityException, ExtrapolationException) as e:
             self.get_logger().warn(
@@ -110,6 +139,9 @@ class CoordinateBridgeNode(Node):
                 f'Is the ground robot\'s localization (map -> {self.base_frame_id}) running?',
                 throttle_duration_sec=2.0)
             return
+        # Report the detection's own time, not the lookup sentinel.
+        # 上报检测自身的时间,而不是查表用的那个哨兵值。
+        transformed.header.stamp = msg.header.stamp
 
         # The target sits on the ground by definition - the z that falls out
         # of the marker-relative depth backprojection just reflects how high
