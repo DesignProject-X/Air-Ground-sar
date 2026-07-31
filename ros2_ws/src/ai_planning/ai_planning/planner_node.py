@@ -37,8 +37,20 @@ llm_plan = llm.with_structured_output(TaskPlan)
 
 def parse_intent(state: PlanState) -> PlanState:
     result: IntentResult = llm_intent.invoke([
+        # The intent is what decompose_tasks reasons over, so whatever gets
+        # dropped here is effectively invisible to planning. Observed live:
+        # "Go to Zone B to search trapped person" was reduced to "search for
+        # trapped person" - the navigation verb was gone, only the purpose
+        # survived, and the planner then produced a recon-only sequence.
+        # intent 是 decompose_tasks 用来推理的输入,所以在这一步被丢掉的东西,
+        # 对规划来说等于不存在。实测过:"Go to Zone B to search trapped person"
+        # 被压成了 "search for trapped person"——导航动词没了,只剩下目的,
+        # 于是规划器只排了建图这一步。
         {"role": "system", "content": (
             "Extract the mission intent and target zone from the operator command. "
+            "Keep the action the operator asked for, not only the purpose behind it: "
+            "if they said to go to, reach, approach or inspect somewhere, that must "
+            "survive into the intent. "
             "goal_zone can be empty if not specified."
         )},
         {"role": "user", "content": state["command"]}
@@ -51,6 +63,11 @@ def decompose_tasks(state: PlanState) -> PlanState:
     result: TaskPlan = llm_plan.invoke([
         {"role": "system", "content": """You are a mission planner for a search and rescue robot team.
 
+You are writing a plan BEFORE any of it runs. Judge each capability by what
+the mission will need, not by what is already true: a target the camera has
+not detected yet, or a map that has not been built yet, is a reason to plan
+the step that consumes it, not a reason to leave that step out.
+
 Available capabilities — only include tasks the mission actually requires:
 
   aerial_recon (agent: uav)
@@ -59,11 +76,14 @@ Available capabilities — only include tasks the mission actually requires:
 
   map_injection (agent: scheduler)
     Converts the UAV map and injects it into the ground robot's navigation stack.
-    Required only when aerial_recon was performed immediately before.
+    Include whenever aerial_recon is part of this same plan - the ground robot
+    cannot navigate on a map that was never injected.
 
   navigate_to_target (agent: ground)
-    Ground robot navigates to the identified target pose.
-    Use when a physical destination exists and the robot must reach it.
+    Ground robot drives to the target's position once the target has been
+    located. Include whenever the mission requires physically reaching,
+    approaching or inspecting a place or a person. The target does not have to
+    be known yet - locating it happens while the plan is carried out.
 
   expand_search (agent: uav)
     Extends UAV reconnaissance to neighbouring zones.
@@ -85,9 +105,18 @@ Rules:
 - Select only the tasks that are genuinely needed for this mission.
 - Preserve dependency order: aerial_recon must precede map_injection,
   map_injection must precede navigate_to_target if both are present.
-- If the command only asks for reconnaissance, do not include navigate_to_target.
+- If the command asks to go to, reach, approach, search or inspect a place -
+  or to find someone there - the plan MUST end with navigate_to_target.
+  Mapping an area is not the same as going to it: a plan that only surveys
+  the area has not carried out such a command.
+- Only leave navigate_to_target out when the command asks purely for a map or
+  a survey, with nothing to be reached afterwards.
 - If a map is already available, skip aerial_recon and map_injection.
-- For each task, provide a brief reason explaining why it is needed."""},
+- Weigh "Original command" as heavily as "Intent": the intent is a short
+  summary and may have lost the action the operator actually asked for.
+- For each task, provide a brief reason explaining why it is needed.
+- Before answering, re-read your own reasons: if a reason justifies a step by
+  what a later step needs, that later step belongs in the plan too."""},
         {"role": "user", "content": (
             f"Intent: {state['intent']}\n"
             f"Goal zone: {state['goal_zone']}\n"
