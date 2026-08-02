@@ -119,7 +119,7 @@ MAP_READY --> DONE
 
 ### 3. Feedback Replanning (LangGraph Loop)
 
-Tests the feedback loop: scheduler exhausts retries → notifies planner →
+Tests the feedback loop: a step fails → scheduler notifies planner →
 planner replans via LangGraph using the execution feedback.
 
 **Setup:** start scheduler and planner only, without fake agents.
@@ -140,16 +140,15 @@ ros2 topic pub --once /operator/command std_msgs/msg/String \
 With no `fake_ground_node` running, `load_existing_map` isn't available
 either, so the scheduler logs a warning and falls straight through to
 `aerial_recon` (same net effect as the fake ground node reporting "no saved
-map", just without a service to call). The scheduler will then retry
-`aerial_recon` three times (each after `RECON_TIMEOUT_S = 140s` — sized to
-leave margin above the simulated-UAV mapping duration used elsewhere in
-this project, see the note above; it doesn't matter here since nothing
-ever responds either way), then publish a failure message to
-`/planner/feedback`. The planner picks this up and replans — the LLM
-should drop `aerial_recon` and select an alternative (e.g.
-`request_backup`) given that the UAV is reported as unresponsive.
+map", just without a service to call). Nothing ever answers the dispatch,
+so after `RECON_TIMEOUT_S = 140s` the scheduler enters `FAILED` and
+publishes a failure message to `/planner/feedback`. It stays in `FAILED`
+rather than re-dispatching — publish to `/scheduler/reset` to return it to
+`IDLE`. The planner picks the feedback up and replans; the LLM should drop
+`aerial_recon` and select an alternative (e.g. `request_backup`) given that
+the UAV is reported as unresponsive.
 
-Expected output (planner, after ~420s):
+Expected output (planner, after ~140s):
 ```
 Feedback received: Mission failed: aerial_recon timed out ... Replanning...
 Task command published: ... 1 task(s).

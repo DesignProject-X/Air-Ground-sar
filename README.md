@@ -64,6 +64,9 @@ air-ground-sar/
 │       ├── ground_controller/ # Real ground robot side: Nav2 client, ArUco→map coordinate bridge,
 │       │                      #   SSH-free map injection receiver, clock sync, initial pose
 │       ├── uav_vision/        # YOLO + ArUco target detection on the UAV-side camera stream
+│       ├── crazyflie_ros2_multiranger/  # (vendored) UAV wall-following + multiranger mapping
+│       ├── crazyswarm2/       # (vendored) Crazyflie driver and flight services
+│       ├── ros_gz_crazyflie/  # (vendored) Gazebo bridge for the simulated Crazyflie
 │       ├── fake_agents/       # Simulation stubs for UAV and ground robot (hardware-free testing)
 │       ├── custom_msgs/       # Custom ROS 2 message/service definitions (TaskCommand, MapResult,
 │       │                      #   TaskItem, SaveMap, SyncClock, ...)
@@ -106,26 +109,41 @@ workspace, Nav2 + hardware bringup). See
 [`docs/testing/real_hardware.md`](docs/testing/real_hardware.md) for the full
 setup, but the short version:
 
+Start the ground robot before the base station — the base station's clock
+sync is a one-shot that needs the robot already up.
+
 ```bash
 # On the ground robot
 ros2 launch ground_controller robot_bringup.launch.py
 
 # On the base station
 ros2 launch sar_bringup base_station_real.launch.py
-ros2 run fake_agents fake_uav_node   # stand-in for a real/sim UAV recon flight
-# or, for a real simulated (Gazebo) flight instead of a static map:
+ros2 launch crazyflie_ros2_multiranger_bringup wall_follower_mapper_real.launch.py
+# or, instead of a real flight: a Gazebo-simulated one, or a static map
 # ros2 launch cf_controller sim_uav_recon.launch.py fake_target_signal:=false
+# ros2 run fake_agents fake_uav_node
 
 # Dashboard (base station)
-cd ros2_ws/src/sar_bringup/web && python3 -m http.server 8080
+python3 ros2_ws/src/sar_bringup/web/launcher.py
 # open http://localhost:8080/dashboard.html
 ```
+
+`launcher.py` serves the dashboard and also gives it start/stop buttons for
+everything above, so it is normally the only command you need to run by hand.
 
 ## Environment Variables
 
 ```bash
 export GOOGLE_API_KEY=your_gemini_api_key_here
 export ROS_DOMAIN_ID=0
+```
+
+For real hardware, both machines additionally need the same DDS setup, or
+they will not discover each other at all:
+
+```bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI=~/.ros/cyclone_dds.xml   # lists the other machine as a <Peer>
 ```
 
 ## External Dependencies
@@ -206,6 +224,9 @@ air-ground-sar/
 │       ├── ground_controller/ # 真实地面机器人端：Nav2 客户端、ArUco→map坐标转换桥、
 │       │                      #   免SSH地图注入接收节点、时钟同步、初始位姿
 │       ├── uav_vision/        # UAV端摄像头画面上的 YOLO + ArUco 目标检测
+│       ├── crazyflie_ros2_multiranger/  #（第三方）无人机沿墙飞行 + multiranger 建图
+│       ├── crazyswarm2/       #（第三方）Crazyflie 驱动与飞控服务
+│       ├── ros_gz_crazyflie/  #（第三方）仿真 Crazyflie 的 Gazebo 桥接
 │       ├── fake_agents/       # UAV 与地面机器人仿真桩（无需硬件即可测试）
 │       ├── custom_msgs/       # 自定义 ROS 2 消息/服务定义（TaskCommand、MapResult、
 │       │                      #   TaskItem、SaveMap、SyncClock 等）
@@ -229,7 +250,7 @@ git clone --recursive https://github.com/IMRCLab/crazyswarm2.git
 # 3. 编译
 cd ../..
 colcon build
-source install/setup.bash
+      source install/setup.bash
 
 # 4. 启动（仿真模式，无需硬件）
 export GOOGLE_API_KEY=your_key_here
@@ -245,26 +266,39 @@ ros2 launch sar_bringup simulate_system_gazebo_uav.launch.py
 （它自己独立的 `tb_ws` 工作空间，Nav2 + 硬件启动）。完整配置见
 [`docs/testing/real_hardware.md`](docs/testing/real_hardware.md)，简要版本：
 
+先启动地面机器人,再启动基站——基站的时钟同步是一次性的,需要机器人已经在跑。
+
 ```bash
 # 在地面机器人上
 ros2 launch ground_controller robot_bringup.launch.py
 
 # 在基站上
 ros2 launch sar_bringup base_station_real.launch.py
-ros2 run fake_agents fake_uav_node   # 真实/仿真无人机建图的替身
-# 或者,用真正的仿真(Gazebo)飞行代替静态地图:
+ros2 launch crazyflie_ros2_multiranger_bringup wall_follower_mapper_real.launch.py
+# 或者不用真机飞行:换成 Gazebo 仿真飞行,或者直接用静态地图
 # ros2 launch cf_controller sim_uav_recon.launch.py fake_target_signal:=false
+# ros2 run fake_agents fake_uav_node
 
 # 仪表盘（基站）
-cd ros2_ws/src/sar_bringup/web && python3 -m http.server 8080
+python3 ros2_ws/src/sar_bringup/web/launcher.py
 # 打开 http://localhost:8080/dashboard.html
 ```
+
+`launcher.py` 既负责发送页面,也给面板提供上述各项的启停按钮,所以通常只需要
+手动跑它这一条命令。
 
 ## 环境变量
 
 ```bash
 export GOOGLE_API_KEY=your_gemini_api_key_here
 export ROS_DOMAIN_ID=0
+```
+
+真机场景下,两台机器还需要相同的 DDS 配置,否则根本发现不了对方:
+
+```bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI=~/.ros/cyclone_dds.xml   # 里面把对方机器写成 <Peer>
 ```
 
 ## 外部依赖

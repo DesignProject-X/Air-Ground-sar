@@ -127,11 +127,16 @@ closes the gap this node deliberately leaves open:
    not aligned with it as first assumed).
 2. Consumes the ground robot's own live localization (`map → base_link`,
    already required for `NavigateToPose` to work).
-3. Uses `tf2` (`transform()` with a configurable `transform_timeout_sec`,
-   default 2.0s — AMCL's own `map → odom` broadcast rate is slower/less
-   regular than this node's ~2Hz detection rate, especially while the robot
-   is stationary, and the default 0.5s timeout was routinely too short) to
-   transform the raw pose into `map` frame.
+3. Transforms the raw pose into `map` frame with `tf2`, looking the
+   transform up at the **latest available time** rather than at the
+   detection's own stamp. Asking for the exact stamp is what that field is
+   for, but it requires the stamp to still be inside tf2's ~10s buffer, and
+   successful detections here are ~17.8s apart (most frames yield no
+   marker+target pair) — so every lookup asked for a stamp already aged out
+   and failed, and no target ever reached the scheduler. Using the latest
+   transform is sound here: the robot has not been dispatched while the
+   scheduler waits for a target, so `map → base_link` is not moving, and
+   `base_link → aruco_marker` is static.
 4. Flattens `z` to `0.0` before publishing on `/camera/target_pose` — the
    target is known to sit on the ground, so whatever the marker-relative
    backprojection computes for height just reflects marker mounting height
@@ -143,9 +148,12 @@ closes the gap this node deliberately leaves open:
   is used as-is; there's no averaging or consistency-voting across multiple
   successful frames. In practice, detection confidence on the current rig
   sits close to the `detection_confidence_threshold` (often 0.4-0.8), so
-  successful frames arrive sparsely (roughly every 1-2s) rather than every
-  frame - fusion across frames could make this more robust, at the cost of
-  latency.
+  successful frames arrive sparsely rather than every frame - fusion across
+  frames could make this more robust, at the cost of latency. How sparse
+  depends heavily on the rig: a run with the marker only intermittently in
+  view measured ~17.8s between successful detections, far enough apart to
+  break anything that assumes a steady stream (see `coordinate_bridge_node`
+  above).
 - **No multi-target support.** Only the single highest-confidence detection
   per frame is reported.
 - **Tuned for a near-top-down viewing angle.** The aspect-ratio filter and
